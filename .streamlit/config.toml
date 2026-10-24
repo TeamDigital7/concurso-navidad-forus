@@ -1,0 +1,15 @@
+[theme]
+base = "dark"
+primaryColor = "#C9A24D"
+backgroundColor = "#0A0D14"
+secondaryBackgroundColor = "#141821"
+textColor = "#ECE6D6"
+font = "sans serif"
+
+[server]
+headless = true
+# Igual que en catalogo-control-center: evita agotar inotify en Streamlit Cloud
+fileWatcherType = "none"
+
+[browser]
+gatherUsageStats = false
