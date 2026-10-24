@@ -20,14 +20,64 @@ COLUMNAS = ["fecha", "tienda", "venta", "presupuesto", "venta_ly", "tickets",
 FECHA_DEMO = date(2026, 12, 9)  # hasta dónde llegan los datos de ejemplo
 
 
+# Tabla de venta retail que usa ForusIQ/Forusight (src/forusight/data/fuentes.py).
+TABLA_VENTA_RETAIL = "forus-analitica-prod-datalake.silver.ft_pe_venta_retail"
+# Documentos de cliente genéricos: un ticket con estos RUT no cuenta como fidelizado.
+CLIENTES_GENERICOS = ("", "0", "00000000", "11111111", "99999999", "999999999")
+
+# Venta diaria por tienda del concurso, este año y el mismo día del año pasado (364 días antes,
+# mismo día de la semana). Un ticket es un nrodoc_lv distinto; fidelizado si trae cliente real.
+SQL_VENTA = """
+WITH dia AS (
+  SELECT
+    DATE(fecmov_lv) AS fecha,
+    UPPER(TRIM(nombre_tienda)) AS tienda,
+    SUM({col_venta}) AS venta,
+    COUNT(DISTINCT nrodoc_lv) AS tickets,
+    COUNT(DISTINCT IF(TRIM(IFNULL(CAST(rutcli_lv AS STRING), '')) NOT IN UNNEST(@genericos),
+                      nrodoc_lv, NULL)) AS tickets_fidelizados,
+    SUM(unidades_venta) AS unidades
+  FROM `{tabla}`
+  WHERE DATE(fecmov_lv) BETWEEN DATE_SUB(@inicio, INTERVAL 364 DAY) AND @fin
+    AND UPPER(TRIM(nombre_tienda)) IN UNNEST(@tiendas)
+  GROUP BY fecha, tienda
+)
+SELECT a.fecha, a.tienda, a.venta, IFNULL(ly.venta, 0) AS venta_ly,
+       a.tickets, a.tickets_fidelizados, a.unidades
+FROM dia a
+LEFT JOIN dia ly ON ly.tienda = a.tienda AND ly.fecha = DATE_SUB(a.fecha, INTERVAL 364 DAY)
+WHERE a.fecha BETWEEN @inicio AND @fin
+"""
+
+
 def config_bigquery() -> dict | None:
+    """Usa los mismos secrets que Catálogo Control Center y ForusIQ ([bigquery] + [gcp_service_account])."""
     try:
         cfg = dict(st.secrets.get("bigquery", {}))
+        tiene_cuenta = "gcp_service_account" in st.secrets
     except FileNotFoundError:
         return None
-    if not cfg.get("enabled", True) or not (cfg.get("ventas_query") or cfg.get("ventas_table")):
+    if not cfg or not tiene_cuenta or not cfg.get("enabled", True):
         return None
     return cfg
+
+
+def _leer_presupuesto(client, cfg: dict, bigquery) -> pd.DataFrame | None:
+    """Presupuesto diario por tienda: tabla configurable (fecha, tienda, presupuesto)."""
+    tabla = cfg.get("presupuesto_table")
+    if not tabla:
+        return None
+    sql = f"""
+        SELECT DATE({cfg.get('presupuesto_col_fecha', 'fecha')}) AS fecha,
+               UPPER(TRIM({cfg.get('presupuesto_col_tienda', 'tienda')})) AS tienda,
+               SUM({cfg.get('presupuesto_col_valor', 'presupuesto')}) AS presupuesto
+        FROM `{tabla}`
+        WHERE DATE({cfg.get('presupuesto_col_fecha', 'fecha')}) BETWEEN @inicio AND @fin
+        GROUP BY fecha, tienda"""
+    return client.query(sql, job_config=bigquery.QueryJobConfig(query_parameters=[
+        bigquery.ScalarQueryParameter("inicio", "DATE", INICIO),
+        bigquery.ScalarQueryParameter("fin", "DATE", FIN),
+    ])).to_dataframe()
 
 
 def _leer_bigquery(cfg: dict) -> pd.DataFrame:
@@ -37,14 +87,24 @@ def _leer_bigquery(cfg: dict) -> pd.DataFrame:
     cred = service_account.Credentials.from_service_account_info(dict(st.secrets["gcp_service_account"]))
     client = bigquery.Client(project=cfg.get("job_project_id") or cfg.get("project_id"),
                              credentials=cred, location=cfg.get("location"))
-    sql = cfg.get("ventas_query") or f"""
-        SELECT {', '.join(COLUMNAS)} FROM `{cfg['ventas_table']}`
-        WHERE fecha BETWEEN @inicio AND @fin"""
-    job = client.query(sql, job_config=bigquery.QueryJobConfig(query_parameters=[
+    sql = cfg.get("ventas_query") or SQL_VENTA.format(
+        tabla=cfg.get("ventas_retail_table", TABLA_VENTA_RETAIL),
+        col_venta=cfg.get("ventas_col_monto", "venta_total_sin_iva"),
+    )
+    venta = client.query(sql, job_config=bigquery.QueryJobConfig(query_parameters=[
         bigquery.ScalarQueryParameter("inicio", "DATE", INICIO),
         bigquery.ScalarQueryParameter("fin", "DATE", FIN),
-    ]))
-    return job.to_dataframe()
+        bigquery.ArrayQueryParameter("tiendas", "STRING", list(TIENDA_A_CASA)),
+        bigquery.ArrayQueryParameter("genericos", "STRING", list(CLIENTES_GENERICOS)),
+    ])).to_dataframe()
+    ppto = _leer_presupuesto(client, cfg, bigquery)
+    if ppto is None:
+        # Sin tabla de presupuesto no se puede medir cumplimiento: queda en 0 y la app lo avisa
+        venta["presupuesto"] = 0.0
+    elif "presupuesto" not in venta:
+        venta = venta.merge(ppto, on=["fecha", "tienda"], how="left")
+        venta["presupuesto"] = venta["presupuesto"].fillna(0.0)
+    return venta
 
 
 def _ejemplo(seed: int = 7) -> pd.DataFrame:

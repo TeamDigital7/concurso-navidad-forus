@@ -30,7 +30,7 @@ def puntos_por_tramo(df: pd.DataFrame, hasta=None) -> pd.DataFrame:
     g["inicio"] = g["tramo"].map(lambda i: TRAMOS[i].inicio)
     g["fin"] = g["tramo"].map(lambda i: TRAMOS[i].fin)
     g["cerrado"] = True if hasta is None else g["fin"] <= hasta
-    g["cumplimiento"] = g["venta"] / g["presupuesto"]
+    g["cumplimiento"] = g["venta"] / g["presupuesto"].replace(0, np.nan)
     g["sss"] = g["venta"] / g["venta_ly"] - 1
     g["fidelizacion"] = g["tickets_fidelizados"] / g["tickets"]
     g["pts_venta"] = np.where(g["cumplimiento"] >= 1, g["tramo"].map(lambda i: TRAMOS[i].puntos), 0)
@@ -53,7 +53,7 @@ def ranking(pt: pd.DataFrame) -> pd.DataFrame:
         tickets=("tickets", "sum"), tickets_fidelizados=("tickets_fidelizados", "sum"),
         unidades=("unidades", "sum"), tramos_ganados=("pts_venta", lambda s: int((s > 0).sum())),
     )
-    r["cumplimiento"] = r["venta"] / r["presupuesto"]
+    r["cumplimiento"] = r["venta"] / r["presupuesto"].replace(0, np.nan)
     r["sss"] = r["venta"] / r["venta_ly"] - 1
     r["fidelizacion"] = r["tickets_fidelizados"] / r["tickets"]
     r["ticket_prom"] = r["venta"] / r["tickets"]
@@ -65,7 +65,7 @@ def resumen_casas(rank: pd.DataFrame) -> pd.DataFrame:
     c = rank.groupby("casa", as_index=False).agg(
         puntos=("puntos", "sum"), magos=("tienda", "count"),
         venta=("venta", "sum"), presupuesto=("presupuesto", "sum"), venta_ly=("venta_ly", "sum"))
-    c["cumplimiento"] = c["venta"] / c["presupuesto"]
+    c["cumplimiento"] = c["venta"] / c["presupuesto"].replace(0, np.nan)
     c["sss"] = c["venta"] / c["venta_ly"] - 1
     c["puntos_prom"] = c["puntos"] / c["magos"]
     return c.sort_values("puntos", ascending=False).reset_index(drop=True)
@@ -82,7 +82,8 @@ def factor_pago(cumplimiento_retail: float) -> float:
 def ganadores(pt: pd.DataFrame, competencia) -> tuple[pd.DataFrame, float, float]:
     """Top 5 por casa de una competencia, con premio ajustado por el cumplimiento del Retail."""
     d = pt[pt["competencia"] == competencia.nombre]
-    cumpl = d["venta"].sum() / d["presupuesto"].sum() if len(d) else 0.0
+    ppto = d["presupuesto"].sum()
+    cumpl = d["venta"].sum() / ppto if ppto else 0.0
     f = factor_pago(cumpl)
     r = ranking(d)
     r["puesto"] = r.groupby("casa").cumcount() + 1

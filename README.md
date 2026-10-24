@@ -51,6 +51,20 @@ Settings → Secrets de Streamlit Cloud:
 
 ## Datos reales
 
-`data.py` espera una fila por tienda y día con:
-`fecha, tienda, venta, presupuesto, venta_ly, tickets, tickets_fidelizados, unidades`.
-La casa se asigna por el nombre de la tienda (`concurso.TIENDA_A_CASA`).
+Con `[bigquery]` y `[gcp_service_account]` en los secrets, `data.py` lee la venta de la tabla de
+venta retail que usa Forusight (ForusIQ): `forus-analitica-prod-datalake.silver.ft_pe_venta_retail`.
+
+| Dato | De dónde sale |
+|---|---|
+| venta | `SUM(venta_total_sin_iva)` por `nombre_tienda` y día (`fecmov_lv`) |
+| venta_ly | la misma consulta 364 días antes (mismo día de la semana) |
+| tickets | `COUNT(DISTINCT nrodoc_lv)` |
+| tickets fidelizados | tickets con `rutcli_lv` de un cliente real (no vacío ni genérico) |
+| unidades | `SUM(unidades_venta)` |
+| presupuesto | **pendiente**: `presupuesto_table` en los secrets |
+
+Las tiendas se cruzan por nombre con `concurso.TIENDAS`; 83 de las 90 coinciden con el maestro
+de tiendas de ForusIQ. Faltan los nombres de Parfois (4), Olympikus Mega Plaza, Vans Outlet Jockey
+y CLB Outlet Jockey en la tabla de venta.
+
+Sin secrets la app usa datos de ejemplo.

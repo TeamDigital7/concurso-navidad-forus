@@ -48,6 +48,12 @@ if not requerir_login():
 
 # ---------- Datos ----------
 df_all, fuente = cargar_datos()
+if df_all.empty:
+    st.info(f"Fuente: {fuente}. Todavía no hay ventas del concurso (empieza el {INICIO:%d/%m/%Y}).")
+    st.stop()
+if df_all["presupuesto"].sum() == 0:
+    st.warning("No hay presupuesto cargado: falta configurar `presupuesto_table` en los secrets. "
+               "Sin presupuesto no se puede calcular el cumplimiento ni los puntos por venta.")
 corte = df_all["fecha"].max().date()
 pt_all = puntos_por_tramo(df_all, hasta=corte)
 rank_all = ranking(pt_all)
@@ -120,8 +126,8 @@ def tarjetas_casas():
 
 def kpis():
     venta, ppto, ly = df_all["venta"].sum(), df_all["presupuesto"].sum(), df_all["venta_ly"].sum()
-    cumpl = venta / ppto
-    sss = venta / ly - 1
+    cumpl = venta / ppto if ppto else 0.0
+    sss = venta / ly - 1 if ly else 0.0
     meta_sss = DESAFIOS_SSS.get(corte.month, 0)
     fid = df_all["tickets_fidelizados"].sum() / df_all["tickets"].sum()
     f = factor_pago(cumpl)
