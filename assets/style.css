@@ -23,7 +23,11 @@ html, body, [class*="css"], .stApp { font-family: 'Inter', sans-serif; }
     radial-gradient(900px 500px at -10% 30%, rgba(90,26,26,0.20), transparent 60%),
     var(--bg);
 }
-#MainMenu, footer, header[data-testid="stHeader"] { visibility: hidden; height: 0; }
+/* La cabecera se queda (dentro vive el botón para abrir el menú lateral, que en el celular es la
+   única forma de navegar) pero transparente y sin los botones de Streamlit. */
+#MainMenu, footer, [data-testid="stMainMenu"], [data-testid="stToolbarActions"],
+[data-testid="stAppDeployButton"], [data-testid="stDecoration"], [data-testid="stStatusWidget"] { display: none !important; }
+header[data-testid="stHeader"] { background: transparent; }
 .block-container { padding-top: 1.2rem; padding-bottom: 2rem; max-width: 1500px; }
 h2, h4 { font-family: 'Cinzel', serif !important; color: var(--gold-soft) !important; }
 
@@ -176,10 +180,64 @@ div[data-testid="stVerticalBlockBorderWrapper"] {
   .houses { grid-template-columns: repeat(3, 1fr); }
   .kpis { grid-template-columns: repeat(2, 1fr); }
 }
+/* ---------- Tarjetas de tiendas (solo celular) ---------- */
+.magos-movil { display: none; }
+.mago { border-radius: 12px; margin: 0 0 8px; background: var(--panel-2);
+  border: 1px solid rgba(255,255,255,.06); border-left: 4px solid var(--c); overflow: hidden; }
+.mago summary { list-style: none; display: flex; align-items: center; gap: 12px; padding: 12px 14px;
+  min-height: 56px; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.mago summary::-webkit-details-marker { display: none; }
+.mago summary::after { content: "▾"; color: var(--muted); font-size: .9rem; transition: transform .15s; }
+.mago[open] summary::after { transform: rotate(180deg); }
+.mago[open] summary { border-bottom: 1px solid rgba(255,255,255,.06); }
+.mago .pos { width: 30px; text-align: center; font-weight: 700; color: var(--gold-soft); font-size: 1.05rem; flex: none; }
+.mago .nom { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.mago .nom b { color: var(--text); font-size: .92rem; font-weight: 600; line-height: 1.25; }
+.mago .nom small { color: var(--muted); font-size: .75rem; display: flex; align-items: center; gap: 6px; margin-top: 2px; }
+.mago .nom small i { width: 8px; height: 8px; border-radius: 50%; background: var(--c); border: 1px solid rgba(255,255,255,.3); }
+.mago summary .pts { text-align: right; color: var(--gold-soft); font-weight: 700; font-size: 1.15rem; line-height: 1; flex: none; }
+.mago summary .pts small { display: block; font-size: .65rem; color: var(--muted); font-weight: 500; margin-top: 2px; }
+.mago .det { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; padding: 12px 14px 14px; }
+.mago .det div { display: flex; flex-direction: column; }
+.mago .det .ancho { grid-column: 1 / -1; }
+.mago .det span { color: var(--muted); font-size: .72rem; }
+.mago .det b { color: var(--text); font-size: .95rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mago .det b.pos { color: var(--green); } .mago .det b.neg { color: var(--red); } .mago .det b.pts { color: var(--gold-soft); }
+
 @media (max-width: 700px) {
-  .houses, .kpis, .mini-kpis { grid-template-columns: repeat(2, 1fr); }
-  .progress-card { position: relative; right: auto; bottom: auto; margin-top: 180px; width: auto; }
-  .hero p { position: static; margin-top: 12px; }
+  .block-container { padding: 3rem 12px 2rem !important; }
+  /* Tablas -> tarjetas */
+  .solo-escritorio { display: none !important; }
+  .magos-movil { display: block !important; }
+  div[data-testid="stVerticalBlockBorderWrapper"] { padding: 2px !important; }
+
+  /* Portada: se ve el título (está a la izquierda de la imagen) y el avance va debajo */
+  .hero.con-portada { min-height: 0; padding: 0; border-radius: 14px; background-image: none !important; background: none; border: 0; }
+  .hero.con-portada::before { content: ""; display: block; aspect-ratio: 16 / 9; border-radius: 14px;
+    background: var(--portada) left center / cover no-repeat; border: 1px solid var(--line); }
+  .hero p { position: static; margin: 10px 2px 0; font-size: .62rem; letter-spacing: 2px; text-shadow: none; color: var(--muted); }
+  .progress-card { position: relative; right: auto; bottom: auto; width: auto; margin-top: 10px; }
   .hero h1 { max-width: 100%; font-size: 2rem; }
-  .comp-head { flex-direction: column; align-items: flex-start; }
+
+  /* Casas: lista compacta, una fila por casa */
+  .houses { grid-template-columns: 1fr; gap: 8px; }
+  .house { display: grid; grid-template-columns: 44px 1fr auto; grid-template-rows: auto auto; column-gap: 12px;
+    align-items: center; text-align: left; padding: 10px 14px; background: linear-gradient(90deg, var(--f), #0b0e15); }
+  .house img { width: 44px; height: 44px; padding: 2px; grid-row: 1 / 3; }
+  .house .rank { position: static; grid-column: 3; grid-row: 1; justify-self: end; }
+  .house .name { margin: 0; grid-column: 2; grid-row: 1; font-size: .8rem; }
+  .house .pts { grid-column: 3; grid-row: 2; font-size: 1.35rem; margin: 0; text-align: right; }
+  .house .pts-l { display: none; }
+  .house .foot { grid-column: 2; grid-row: 2; margin: 0; padding: 0; background: none; font-size: .7rem; color: #cfcfcf; }
+
+  .kpis { grid-template-columns: 1fr 1fr; gap: 8px; }
+  .kpi { padding: 12px; gap: 10px; }
+  .kpi .ic { display: none; }
+  .kpi .val { font-size: 1.2rem; }
+  .mini-kpis { grid-template-columns: repeat(2, 1fr); }
+  .comp-head { flex-direction: column; align-items: flex-start; padding: 16px; }
+  .comp-head .pago { text-align: left; }
+  .copa { padding: 16px; } .copa .trofeo { font-size: 2.6rem; }
+  .crest-big { max-width: 160px; }
+  .rank-table:not(.solo-escritorio) { font-size: .75rem; display: block; overflow-x: auto; }
 }
