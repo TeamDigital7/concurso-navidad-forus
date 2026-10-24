@@ -74,7 +74,6 @@ with st.sidebar:
         label_visibility="collapsed",
     )
     st.divider()
-    casa_sel = st.selectbox("Casa", ["Todas las casas", *CASAS])
     html(f'<div class="fuente">Fuente: {fuente} · corte {corte:%d/%m/%Y}</div>')
     if auth_configurada():
         html(f'<div class="fuente">👤 {usuario()}</div>')
@@ -82,8 +81,27 @@ with st.sidebar:
             st.logout()
 
 
-def filtrar(r: pd.DataFrame) -> pd.DataFrame:
-    return r if casa_sel == "Todas las casas" else r[r["casa"] == casa_sel].reset_index(drop=True)
+def con_puesto(r: pd.DataFrame) -> pd.DataFrame:
+    """Fija el puesto ANTES de filtrar: buscar una tienda no puede cambiar su posición."""
+    return r.assign(puesto=range(1, len(r) + 1))
+
+
+def filtros_de_ranking(r: pd.DataFrame, clave: str, top: int | None = None) -> pd.DataFrame:
+    """Buscador y casa en la pantalla principal (en el celular el menú lateral queda escondido)."""
+    texto = st.text_input("Buscar tienda", key=f"buscar_{clave}", placeholder="🔎 Buscar tienda (ej. Jockey, CLB, Trujillo)",
+                          label_visibility="collapsed")
+    casa = st.pills("Casa", list(CASAS), key=f"casa_{clave}", label_visibility="collapsed")
+    if casa:
+        r = r[r["casa"] == casa]
+    if texto.strip():
+        palabras = texto.upper().split()
+        r = r[r["tienda"].apply(lambda t: all(p in t for p in palabras))]
+        if r.empty:
+            st.caption("Ninguna tienda coincide con la búsqueda.")
+        return r
+    if top and len(r) > top and not st.toggle(f"Ver las {len(r)} tiendas", key=f"todas_{clave}"):
+        return r.head(top)
+    return r
 
 
 # ---------- Componentes ----------
@@ -92,7 +110,7 @@ def hero():
     dia = min(max((corte - INICIO).days + 1, 0), total)
     portada = img_uri("portada.jpg")
     # La portada del PPT ya trae el título; sin imagen se dibuja en texto
-    fondo = f"background-image: url('{portada}');" if portada else ""
+    fondo = f"background-image: url('{portada}'); --portada: url('{portada}');" if portada else ""
     titulo = "" if portada else "<h1>Forus <span>y el Cáliz de los Campeones</span></h1>"
     html(f"""
     <div class="hero{' con-portada' if portada else ''}" style="{fondo}">
@@ -186,33 +204,62 @@ def grafico_carrera():
     return _layout(fig, soles_y=False)
 
 
+def _pct(x: float, signo: bool = False) -> str:
+    if pd.isna(x):
+        return "–"
+    return f"{x:+.1%}" if signo else f"{x:.1%}"
+
+
 def tabla_magos(r: pd.DataFrame, top: int | None = None, premio: bool = False):
+    """Tabla en escritorio y, en el celular, una tarjeta por tienda que se toca para ver el detalle."""
     medallas = {1: "🥇", 2: "🥈", 3: "🥉"}
-    filas = ""
-    for i, x in (r.head(top) if top else r).iterrows():
-        pos = int(x["puesto"]) if "puesto" in x else i + 1
+    filas = tarjetas = ""
+    for n, (_, x) in enumerate((r.head(top) if top else r).iterrows()):
+        pos = int(x["puesto"]) if "puesto" in x else n + 1
         col = CASAS[x["casa"]]["color"]
         nota = f' <small title="{NOTAS_TIENDA[x["tienda"]]}">*</small>' if x["tienda"] in NOTAS_TIENDA else ""
         extra = f'<td class="num pts">{soles(x["premio"])}</td>' if premio else ""
+        cumple = "pos" if x["cumplimiento"] >= 1 else "neg"
+        crece = "pos" if x["sss"] >= 0 else "neg"
+        premio_m = f'<div><span>Premio</span><b class="pts">{soles(x["premio"])}</b></div>' if premio else ""
+        maestro = MAESTROS_TIENDA.get(x["tienda"])
+        maestro_m = f'<div class="ancho"><span>Maestro</span><b>{maestro}</b></div>' if maestro else ""
+        tarjetas += f"""<details class="mago" style="--c:{col}">
+          <summary><span class="pos">{medallas.get(pos, pos)}</span>
+            <span class="nom"><b>{x['tienda']}{nota}</b><small><i></i>{x['casa']}</small></span>
+            <span class="pts">{int(x['puntos']):,}<small>pts</small></span></summary>
+          <div class="det">
+            <div><span>% Presupuesto</span><b class="{cumple}">{_pct(x['cumplimiento'])}</b></div>
+            <div><span>Crecimiento SSS</span><b class="{crece}">{_pct(x['sss'], True)}</b></div>
+            <div><span>Fidelización</span><b>{x['fidelizacion']:.0%}</b></div>
+            <div><span>Venta</span><b>{soles(x['venta'])}</b></div>
+            <div><span>Puntos por venta</span><b>{int(x['pts_venta'])}</b></div>
+            <div><span>Puntos bonus</span><b>{int(x['pts_bonus'])}</b></div>
+            {premio_m}{maestro_m}
+          </div></details>"""
         filas += f"""<tr>
           <td>{medallas.get(pos, pos)}</td><td>{x['tienda']}{nota}</td>
           <td><span class="chip"><i style="background:{col}"></i>{x['casa']}</span></td>
           <td class="num pts">{int(x['puntos']):,}</td><td class="num">{int(x['pts_venta'])} / {int(x['pts_bonus'])}</td>
-          <td class="num {'pos' if x['cumplimiento'] >= 1 else 'neg'}">{x['cumplimiento']:.1%}</td>
-          <td class="num {'pos' if x['sss'] >= 0 else 'neg'}">{x['sss']:+.1%}</td>
+          <td class="num {cumple}">{_pct(x['cumplimiento'])}</td>
+          <td class="num {crece}">{_pct(x['sss'], True)}</td>
           <td class="num">{x['fidelizacion']:.0%}</td><td class="num">{soles(x['venta'])}</td>{extra}
         </tr>"""
     th_premio = '<th class="num">Premio</th>' if premio else ""
-    html(f"""<table class="rank-table"><thead><tr>
+    html(f"""<table class="rank-table solo-escritorio"><thead><tr>
       <th>#</th><th>Mago (tienda)</th><th>Casa</th><th class="num">Puntos</th><th class="num">Venta / Bonus</th>
       <th class="num">% Ppto</th><th class="num">SSS</th><th class="num">Fidelización</th>
-      <th class="num">Venta</th>{th_premio}</tr></thead><tbody>{filas}</tbody></table>""")
+      <th class="num">Venta</th>{th_premio}</tr></thead><tbody>{filas}</tbody></table>
+      <div class="magos-movil">{tarjetas}</div>""")
 
 
 # ---------- Páginas ----------
 if pagina.endswith("Gran Salón"):
     hero()
     tarjetas_casas()
+    with st.container(border=True):
+        html('<div class="card-title">Ranking de tiendas</div>')
+        tabla_magos(filtros_de_ranking(con_puesto(rank_all), "salon", top=10))
     kpis()
     c1, c2 = st.columns([1.5, 1], gap="medium")
     with c1, st.container(border=True):
@@ -221,9 +268,6 @@ if pagina.endswith("Gran Salón"):
     with c2, st.container(border=True):
         html('<div class="card-title">Carrera de casas · puntos promedio por mago</div>')
         st.plotly_chart(grafico_carrera(), use_container_width=True, config={"displayModeBar": False})
-    with st.container(border=True):
-        html('<div class="card-title">Top 10 magos del torneo</div>')
-        tabla_magos(filtrar(rank_all), top=10)
 
 elif pagina.endswith("Casas"):
     tabs = st.tabs([f"{c}" for c in CASAS])
@@ -266,8 +310,9 @@ elif pagina.endswith("Competencias"):
     </div>""")
     if top.empty:
         st.info("Esta competencia todavía no tiene ventas.")
+    casa_comp = st.pills("Casa", list(CASAS), key="casa_comp", label_visibility="collapsed")
     for casa in CASAS:
-        if casa_sel not in ("Todas las casas", casa):
+        if casa_comp and casa_comp != casa:
             continue
         g = top[top["casa"] == casa]
         if g.empty:
@@ -286,7 +331,7 @@ elif pagina.endswith("Copa del Mejor Mago"):
       <p class="premio">Premio: {PREMIO_CAMPEON}</p>
       <p class="hist">Ganadores 2025: {GANADOR_2025}</p></div></div>""")
     with st.container(border=True):
-        tabla_magos(filtrar(rank_all))
+        tabla_magos(filtros_de_ranking(con_puesto(rank_all), "copa"))
     st.download_button("⬇️ Exportar ranking (CSV)", rank_all.to_csv(index=False).encode("utf-8"),
                        "copa_mejor_mago.csv", "text/csv")
 
