@@ -69,7 +69,7 @@ with st.sidebar:
     """)
     pagina = st.radio(
         "Navegación",
-        ["🏰  Gran Salón", "🛡️  Casas", "⚔️  Competencias", "🏆  Copa del Mejor Mago",
+        ["🏁  Ranking", "🏰  Gran Salón", "🛡️  Casas", "⚔️  Competencias", "🏆  Copa del Mejor Mago",
          "📅  Calendario de puntos", "📜  Reglamento", "🧙  Maestros"],
         label_visibility="collapsed",
     )
@@ -210,8 +210,13 @@ def _pct(x: float, signo: bool = False) -> str:
     return f"{x:+.1%}" if signo else f"{x:.1%}"
 
 
-def tabla_magos(r: pd.DataFrame, top: int | None = None, premio: bool = False):
-    """Tabla en escritorio y, en el celular, una tarjeta por tienda que se toca para ver el detalle."""
+def tabla_magos(r: pd.DataFrame, top: int | None = None, premio: bool = False,
+                solo_lista: bool = False, zona_premio: int | None = None):
+    """Tabla en escritorio y, en el celular, una tarjeta por tienda que se toca para ver el detalle.
+
+    `solo_lista` dibuja las tarjetas también en escritorio (la vista Ranking). `zona_premio` marca
+    los puestos que hoy ganarían premio.
+    """
     medallas = {1: "🥇", 2: "🥈", 3: "🥉"}
     filas = tarjetas = ""
     for n, (_, x) in enumerate((r.head(top) if top else r).iterrows()):
@@ -224,9 +229,11 @@ def tabla_magos(r: pd.DataFrame, top: int | None = None, premio: bool = False):
         premio_m = f'<div><span>Premio</span><b class="pts">{soles(x["premio"])}</b></div>' if premio else ""
         maestro = MAESTROS_TIENDA.get(x["tienda"])
         maestro_m = f'<div class="ancho"><span>Maestro</span><b>{maestro}</b></div>' if maestro else ""
-        tarjetas += f"""<details class="mago" style="--c:{col}">
+        gana = bool(x["gana"]) if "gana" in x else bool(zona_premio and pos <= zona_premio)
+        sello = '<em class="sello">🎁 Premio</em>' if gana else ""
+        tarjetas += f"""<details class="mago{' gana' if gana else ''}" style="--c:{col}">
           <summary><span class="pos">{medallas.get(pos, pos)}</span>
-            <span class="nom"><b>{x['tienda']}{nota}</b><small><i></i>{x['casa']}</small></span>
+            <span class="nom"><b>{x['tienda']}{nota}</b><small><i></i>{x['casa']}{sello}</small></span>
             <span class="pts">{int(x['puntos']):,}<small>pts</small></span></summary>
           <div class="det">
             <div><span>% Presupuesto</span><b class="{cumple}">{_pct(x['cumplimiento'])}</b></div>
@@ -245,6 +252,9 @@ def tabla_magos(r: pd.DataFrame, top: int | None = None, premio: bool = False):
           <td class="num {crece}">{_pct(x['sss'], True)}</td>
           <td class="num">{x['fidelizacion']:.0%}</td><td class="num">{soles(x['venta'])}</td>{extra}
         </tr>"""
+    if solo_lista:
+        html(f'<div class="magos-movil siempre">{tarjetas}</div>')
+        return
     th_premio = '<th class="num">Premio</th>' if premio else ""
     html(f"""<table class="rank-table solo-escritorio"><thead><tr>
       <th>#</th><th>Mago (tienda)</th><th>Casa</th><th class="num">Puntos</th><th class="num">Venta / Bonus</th>
@@ -253,8 +263,64 @@ def tabla_magos(r: pd.DataFrame, top: int | None = None, premio: bool = False):
       <div class="magos-movil">{tarjetas}</div>""")
 
 
+def podio(r: pd.DataFrame):
+    if r.empty:
+        return
+    medallas = ["🥇", "🥈", "🥉"]
+    puestos = ""
+    for (_, x), medalla in zip(r.head(3).iterrows(), medallas):
+        c = CASAS[x["casa"]]
+        puestos += f"""<div class="podio-p" style="--c:{c['color']}; --a:{c['acento']}">
+          <div class="med">{medalla}</div><div class="tn">{x['tienda']}</div>
+          <div class="cs"><i></i>{x['casa']}</div><div class="pt">{int(x['puntos']):,}<small> pts</small></div>
+        </div>"""
+    html(f'<div class="podio">{puestos}</div>')
+
+
+def vista_ranking():
+    """La vista de entrada: quién va primero y la lista completa de tiendas, sin buscar nada."""
+    opciones = ["Torneo completo", comp_actual.nombre]
+    vista = st.segmented_control("Ranking", opciones, default=opciones[0],
+                                 key="rk_vista", label_visibility="collapsed") or opciones[0]
+    if vista == opciones[0]:
+        base, zona, nota = rank_all, None, "Copa del Mejor Mago: suma de todas las competencias."
+    else:
+        base, zona = ranking(pt_all[pt_all["competencia"] == comp_actual.nombre]), 5
+        nota = (f"{comp_actual.nombre} · {comp_actual.inicio:%d/%m} al {comp_actual.fin:%d/%m}. "
+                "Ganan los 5 primeros de cada casa.")
+    texto = st.text_input("Buscar tienda", key="rk_buscar", label_visibility="collapsed",
+                          placeholder="🔎 Buscar tienda (ej. Jockey, CLB, Trujillo)")
+    casa = st.pills("Casa", list(CASAS), key="rk_casa", label_visibility="collapsed")
+    if casa:
+        # Los premios son por casa: con una casa elegida, el puesto es el puesto dentro de la casa
+        r = con_puesto(base[base["casa"] == casa].reset_index(drop=True))
+    else:
+        r = con_puesto(base)
+        if zona:
+            r["puesto_casa"] = r.groupby("casa").cumcount() + 1
+    buscando = bool(texto.strip())
+    if buscando:
+        palabras = texto.upper().split()
+        r = r[r["tienda"].apply(lambda t: all(p in t for p in palabras))]
+    html(f'<div class="rk-nota">{nota} Toca una tienda para ver su detalle.</div>')
+    if r.empty:
+        st.caption("Ninguna tienda coincide con la búsqueda.")
+        return
+    if not buscando:
+        podio(r)
+    if zona and not casa:
+        # Sin casa elegida, la marca de premio sale del puesto dentro de SU casa
+        r = r.assign(gana=r["puesto_casa"] <= zona)
+    tabla_magos(r, solo_lista=True, zona_premio=zona if casa else None)
+    if zona and not casa:
+        st.caption("🎁 marca a quienes hoy están en el top 5 de su casa.")
+
+
 # ---------- Páginas ----------
-if pagina.endswith("Gran Salón"):
+if pagina.endswith("Ranking"):
+    vista_ranking()
+
+elif pagina.endswith("Gran Salón"):
     hero()
     tarjetas_casas()
     with st.container(border=True):
