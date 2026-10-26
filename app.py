@@ -179,7 +179,7 @@ def panel_casas(clase: str = ""):
     html(f'<div class="card {clase}"><div class="card-h">Casas</div>{filas}</div>')
 
 
-def panel_retail():
+def panel_retail(clase: str = ""):
     venta, ppto, ly = df_all["venta"].sum(), df_all["presupuesto"].sum(), df_all["venta_ly"].sum()
     cumpl = venta / ppto if ppto else 0.0
     sss = venta / ly - 1 if ly else 0.0
@@ -195,7 +195,7 @@ def panel_retail():
     ]
     cuerpo = "".join(f'<div class="tile"><span>{l}</span><b class="{"pos" if ok else ""}">{v}</b><small>{s}</small></div>'
                      for l, v, ok, s in tiles)
-    html(f'<div class="card"><div class="card-h">Canal Retail</div><div class="tiles">{cuerpo}</div></div>')
+    html(f'<div class="card {clase}"><div class="card-h">Canal Retail</div><div class="tiles">{cuerpo}</div></div>')
 
 
 def cabecera_casa(casa: str, r: pd.DataFrame):
@@ -226,6 +226,8 @@ def vista_posiciones():
     c_main, c_side = st.columns([2.3, 1], gap="large")
     with c_main:
         aviso_pronostico()
+        # Celular: Canal Retail arriba, luego la tabla y las casas al final (en PC van a la derecha)
+        panel_retail("solo-movil")
         periodo = st.segmented_control("Periodo", periodos, default=periodos[0], key="periodo",
                                        label_visibility="collapsed", width="stretch") or periodos[0]
         casa = st.segmented_control("Casa", ["Todas"] + list(CASAS), default="Todas", key="casa",
@@ -238,9 +240,6 @@ def vista_posiciones():
         r = con_puesto(base[base["casa"] == casa].reset_index(drop=True) if casa else base)
         if casa:
             cabecera_casa(casa, r)
-        else:
-            # Las 5 casas arriba en el celular (en PC están en el panel derecho)
-            panel_casas("solo-movil")
         texto = st.text_input("Buscar tienda", key="buscar", label_visibility="collapsed",
                               placeholder="🔎 Buscar tienda")
         zona = periodo != periodos[0]
@@ -257,9 +256,11 @@ def vista_posiciones():
                 "🎁 = hoy está en el top 5 de su casa." if zona else
                 "Copa del Mejor Mago: puntos sumando todas las competencias.")
         html(f'<div class="nota">{nota} PTS = puntos · % PPTO = venta vs. presupuesto.</div>')
+        if not casa:
+            panel_casas("solo-movil")
     with c_side:
         panel_casas("solo-pc")
-        panel_retail()
+        panel_retail("solo-pc")
 
 
 def vista_competencias():
