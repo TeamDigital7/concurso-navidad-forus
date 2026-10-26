@@ -228,7 +228,7 @@ def panel_casas(clase: str = ""):
 def panel_retail(clase: str = ""):
     venta, ppto, ly = df_all["venta"].sum(), df_all["presupuesto"].sum(), df_all["venta_ly"].sum()
     cumpl = venta / ppto if ppto else 0.0
-    sss = venta / ly - 1 if ly else 0.0
+    sss = df_all["venta"].where(df_all["venta_ly"] > 0, 0).sum() / ly - 1 if ly else 0.0  # días comparables
     meta_sss = DESAFIOS_SSS.get(corte.month, 0)
     fid = df_all["tickets_fidelizados"].sum() / max(df_all["tickets"].sum(), 1)
     f = factor_pago(cumpl)
@@ -262,37 +262,58 @@ def pie():
 
 
 # ---------- Vistas ----------
+ACUMULADO = "Torneo completo · acumulado"
+
+
+def _estado_comp(c) -> str:
+    return "cerrada" if corte >= c.fin else ("en curso" if corte >= c.inicio else "por iniciar")
+
+
+def selector_periodo() -> str:
+    """Desplegable: el acumulado del torneo (Copa del Mejor Mago) o cada competencia por su nombre."""
+    opciones = [ACUMULADO] + [c.nombre for c in COMPETENCIAS]
+    if st.session_state.get("periodo") not in opciones:  # sesiones con el selector anterior
+        st.session_state.pop("periodo", None)
+
+    def _etiqueta(o: str) -> str:
+        if o == ACUMULADO:
+            return "🏆  Torneo completo · acumulado (Copa del Mejor Mago)"
+        c = next(c for c in COMPETENCIAS if c.nombre == o)
+        return f"⚡  {c.nombre} · {c.inicio:%d/%m}–{c.fin:%d/%m} · {_estado_comp(c)}"
+
+    return st.selectbox("Periodo", opciones, key="periodo", format_func=_etiqueta,
+                        label_visibility="collapsed")
+
+
 def vista_posiciones():
-    periodos = ["Torneo", comp_actual.nombre]
     c_main, c_side = st.columns([2.3, 1], gap="large")
     with c_main:
         aviso_simulacion()
         # Celular: Canal Retail arriba, luego la tabla y las casas al final (en PC van a la derecha)
         panel_retail("solo-movil")
-        periodo = selector("Periodo", periodos, "periodo")
+        periodo = selector_periodo()
         casa = selector("Casa", ["Todas"] + list(CASAS), "casa")
         casa = None if casa == "Todas" else casa
-        if periodo == periodos[0]:
-            base = rank_all
-        else:
-            base = ranking(pt_all[pt_all["competencia"] == comp_actual.nombre])
+        zona = periodo != ACUMULADO
+        base = ranking(pt_all[pt_all["competencia"] == periodo]) if zona else rank_all
         r = con_puesto(base[base["casa"] == casa].reset_index(drop=True) if casa else base)
         if casa:
             cabecera_casa(casa, r)
         texto = st.text_input("Buscar tienda", key="buscar", label_visibility="collapsed",
                               placeholder="🔎 Buscar mago (tienda)")
-        zona = periodo != periodos[0]
         r["gana"] = (r.groupby("casa").cumcount() + 1 <= GANADORES_POR_CASA) if zona else False
         if texto.strip():
             palabras = texto.upper().split()
             r = r[r["tienda"].apply(lambda t: all(p in t for p in palabras))]
-        if r.empty:
+        if base.empty:
+            st.caption(f"{periodo} todavía no empieza: aquí aparecerá su ranking.")
+        elif r.empty:
             st.caption("Ninguna tienda coincide con la búsqueda.")
         else:
             html(tabla_posiciones(r, corte_premio=GANADORES_POR_CASA if zona and casa and not texto.strip() else None,
                                   marcar="gana" if zona and not casa else None))
-        nota = ("Ganan premio los 5 primeros de cada casa (línea verde)." if zona and casa else
-                "🎁 = hoy está en el top 5 de su casa." if zona else
+        nota = (f"{periodo}: ganan premio los 5 primeros de cada casa (línea verde)." if zona and casa else
+                f"{periodo} · 🎁 = está en el top 5 de su casa." if zona else
                 "Copa del Mejor Mago: puntos sumando todas las competencias.")
         html(f'<div class="nota">{nota} PTS = puntos · % PPTO = venta vs. presupuesto.</div>')
         if not casa:
