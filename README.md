@@ -6,13 +6,13 @@ Las reglas salen del PPT del concurso.
 ## Estructura
 
 ```
-app.py                         # páginas: Gran Salón, Casas, Competencias, Copa, Calendario, Reglamento, Maestros
+app.py                         # pantalla estilo "posiciones" de X: Posiciones (todas o por casa), Competencias, Calendario, Reglas
 concurso.py                    # reglamento como datos: casas, tiendas, tramos de puntos, bonus, premios, maestros
 puntos.py                      # cálculo de puntos por tramo, rankings, top 5 por casa y factor de pago
 data.py                        # fuente de datos: BigQuery (si hay secrets) o datos de ejemplo
 auth.py                        # inicio de sesión con Microsoft Entra ID (st.login)
 assets/style.css               # tema oscuro y dorado
-assets/escudos/*.webp          # escudos de las 5 casas
+assets/escudos/*.webp          # escudos de las 5 casas (mini/: recortados, cuadrados, 96 y 256 px)
 assets/portada.jpg             # portada del PPT
 .streamlit/config.toml         # tema base
 .streamlit/secrets.example.toml# plantilla de secrets (auth Microsoft + BigQuery)
