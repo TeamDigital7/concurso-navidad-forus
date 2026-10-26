@@ -50,8 +50,8 @@ if not requerir_login():
     st.stop()
 
 # ---------- Datos ----------
-# Simulación: el torneo completo jugado con la venta real de septiembre y octubre (calzan día a
-# día con noviembre y diciembre). Antes del 01/11 es lo que se ve; después queda como opción en el
+# Simulación: el torneo completo jugado con la venta real de septiembre y octubre (corrida 9 semanas
+# para que cada día caiga en el mismo día de la semana que en el torneo). Antes del 01/11 es lo que se ve; después queda como opción en el
 # interruptor de arriba. El link ?simulacion=1 la abre directo.
 def _sincronizar_link():
     if st.session_state["simulacion"]:
@@ -63,7 +63,8 @@ def _sincronizar_link():
 def interruptor_simulacion():
     st.toggle("🔮 Simulación con la venta real de septiembre y octubre", key="simulacion",
               on_change=_sincronizar_link,
-              help="Juega todo el torneo con la venta real de set–oct (el 01/09 cuenta como el 01/11).")
+              help="Juega todo el torneo con la venta real de set–oct, día de la semana contra día de la "
+                   "semana: el domingo 30/08 cuenta como el domingo 01/11.")
 
 
 if "simulacion" not in st.session_state:
@@ -168,7 +169,7 @@ def aviso_simulacion():
     meta = (" Sin presupuesto cargado para esas fechas, la meta es la venta del año pasado + el desafío "
             "SSS del mes.") if simulacion["referencial"] else ""
     texto = (f"🔮 <b>La profecía:</b> el torneo jugado con la venta real del {simulacion['desde']:%d/%m} al "
-             f"{simulacion['hasta']:%d/%m} (el {simulacion['desde']:%d/%m} cuenta como el {INICIO:%d/%m}; "
+             f"{simulacion['hasta']:%d/%m} (el domingo {simulacion['desde']:%d/%m} cuenta como el domingo {INICIO:%d/%m}, día de la semana contra día de la semana; "
              f"llega hasta el {hasta_sim:%d/%m} del torneo). Los puntos no cuentan.{meta}")
     html(f'<div class="pronostico">{texto}</div>')
 
