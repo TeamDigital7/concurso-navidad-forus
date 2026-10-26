@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Inter:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Cinzel+Decorative:wght@700&family=Inter:wght@400;500;600;700&display=swap');
 
 /* Formato de "posiciones" de X: barra de título, pestañas subrayadas, selector tipo East/West,
    tabla limpia con escudo + nombre, y a la derecha (en PC) las casas como "Who to follow". */
@@ -17,7 +17,19 @@
 
 /* ---------- Base ---------- */
 html, body, [class*="css"], .stApp { font-family: 'Inter', sans-serif; }
-.stApp { background: var(--bg); color: var(--text); }
+/* Cielo nocturno sobre el castillo: estrellas finas y un resplandor violeta arriba */
+.stApp { color: var(--text); background:
+  radial-gradient(1px 1px at 12% 18%, rgba(255,255,255,.55) 50%, transparent 51%),
+  radial-gradient(1px 1px at 78% 9%, rgba(255,255,255,.45) 50%, transparent 51%),
+  radial-gradient(1.5px 1.5px at 33% 62%, rgba(241,215,145,.45) 50%, transparent 51%),
+  radial-gradient(1px 1px at 88% 44%, rgba(255,255,255,.4) 50%, transparent 51%),
+  radial-gradient(1px 1px at 54% 82%, rgba(255,255,255,.35) 50%, transparent 51%),
+  radial-gradient(1.5px 1.5px at 6% 74%, rgba(255,255,255,.35) 50%, transparent 51%),
+  radial-gradient(1px 1px at 66% 33%, rgba(241,215,145,.4) 50%, transparent 51%),
+  radial-gradient(1px 1px at 92% 88%, rgba(255,255,255,.35) 50%, transparent 51%),
+  radial-gradient(900px 420px at 50% -8%, rgba(88,64,160,.28), transparent 70%),
+  linear-gradient(180deg, #0C0E1C 0%, #090A12 60%, #07070C 100%);
+  background-attachment: fixed; }
 #MainMenu, footer, [data-testid="stMainMenu"], [data-testid="stToolbarActions"], [data-testid="stToolbar"],
 [data-testid="stAppDeployButton"], [data-testid="stDecoration"], [data-testid="stStatusWidget"],
 header[data-testid="stHeader"], section[data-testid="stSidebar"], [data-testid="stExpandSidebarButton"],
@@ -35,11 +47,18 @@ header[data-testid="stHeader"], section[data-testid="stSidebar"], [data-testid="
 
 /* ---------- Barra de título ---------- */
 .topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  background: linear-gradient(90deg, var(--c), color-mix(in srgb, var(--c) 55%, #0B0D12));
-  border-radius: 16px; padding: 14px 18px; }
-.tb-t { display: flex; align-items: center; gap: 10px; color: #fff; font-family: 'Cinzel', serif;
-  font-weight: 700; font-size: 1.2rem; letter-spacing: .5px; line-height: 1.2; }
-.tb-t img { width: 34px; height: 34px; object-fit: contain; flex: none; }
+  min-height: 132px; border-radius: 16px; padding: 14px 20px; border: 1px solid rgba(201,162,77,.45);
+  box-shadow: 0 10px 30px rgba(0,0,0,.45), inset 0 0 0 1px rgba(241,215,145,.08);
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--c) 88%, #000) 0%, color-mix(in srgb, var(--c) 45%, transparent) 34%,
+                    transparent 58%),
+    linear-gradient(0deg, rgba(8,8,16,.55), transparent 45%),
+    var(--portada) right 82% / cover no-repeat, #0C0E1C; }
+.tb-t { display: flex; align-items: center; gap: 10px; color: var(--gold-soft); font-family: 'Cinzel Decorative', 'Cinzel', serif;
+  font-weight: 700; font-size: 1.45rem; letter-spacing: .5px; line-height: 1.15;
+  text-shadow: 0 2px 10px rgba(0,0,0,.8), 0 0 18px rgba(241,215,145,.25); }
+.tb-t img { width: 46px; height: 46px; object-fit: contain; flex: none; filter: drop-shadow(0 2px 6px rgba(0,0,0,.7)); }
+.tb-r .live { background: rgba(0,0,0,.45); padding: 4px 10px; border-radius: 20px; }
 .tb-r { flex: none; }
 .live { color: rgba(255,255,255,.85); font-size: .78rem; font-weight: 500; white-space: nowrap; }
 .live::before { content: "●"; color: var(--green); margin-right: 6px; }
@@ -73,7 +92,8 @@ header[data-testid="stHeader"], section[data-testid="stSidebar"], [data-testid="
 [data-testid="stTextInput"] input { background: var(--panel) !important; border-radius: 12px; }
 
 /* ---------- Tabla de posiciones ---------- */
-.std-wrap { background: var(--panel); border-radius: 16px; padding: 4px 14px 6px; overflow-x: auto; }
+.std-wrap { background: var(--panel); border-radius: 16px; padding: 4px 14px 6px; overflow-x: auto;
+  border: 1px solid rgba(201,162,77,.16); box-shadow: inset 0 1px 0 rgba(241,215,145,.06); }
 .std { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
 .std th { text-align: left; color: var(--muted); font-size: .72rem; font-weight: 700; letter-spacing: .4px;
   padding: 12px 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
@@ -93,12 +113,33 @@ header[data-testid="stHeader"], section[data-testid="stSidebar"], [data-testid="
 .tm img { width: 26px; height: 26px; object-fit: contain; flex: none; }
 .tm b { font-weight: 600; font-size: .88rem; line-height: 1.25; }
 .tm sup { color: var(--muted); }
+/* Sellos de lacre para el podio */
+.sello { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; font-size: .82rem;
+  font-weight: 800; color: #2a1a05; box-shadow: inset 0 -2px 3px rgba(0,0,0,.35), 0 1px 4px rgba(0,0,0,.5); }
+.sello.s1 { background: radial-gradient(circle at 35% 30%, #FFF1B8, #E2B33C 55%, #9C7414); }
+.sello.s2 { background: radial-gradient(circle at 35% 30%, #FFFFFF, #C9CED6 55%, #7D838D); }
+.sello.s3 { background: radial-gradient(circle at 35% 30%, #FFD9B0, #C8823F 55%, #7E4A1C); }
 .gana { font-size: .85rem; flex: none; }
 
 /* ---------- Tarjetas (panel derecho) ---------- */
-.card { background: var(--panel); border-radius: 16px; padding: 14px 16px; }
-.card-h { font-weight: 700; font-size: 1.05rem; margin: 2px 0 10px; color: var(--text); }
+.card { background: var(--panel); border-radius: 16px; padding: 14px 16px;
+  border: 1px solid rgba(201,162,77,.16); box-shadow: inset 0 1px 0 rgba(241,215,145,.06); }
+.card-h { font-family: 'Cinzel', serif; font-weight: 700; font-size: 1.05rem; margin: 2px 0 10px; color: var(--gold-soft);
+  letter-spacing: .4px; }
 .card-h:not(:first-child) { margin-top: 16px; }
+/* Relojes de arena de la Copa de las Casas */
+.relojes { display: flex; justify-content: space-between; gap: 6px; padding: 4px 4px 14px; margin-bottom: 4px;
+  border-bottom: 1px solid var(--line); }
+.reloj { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.tubo { position: relative; width: 30px; height: 112px; border-radius: 15px; overflow: hidden;
+  background: linear-gradient(90deg, rgba(255,255,255,.05), rgba(255,255,255,.12) 30%, rgba(255,255,255,.03) 70%);
+  border: 2px solid #B8912F; box-shadow: 0 -4px 0 -1px #E2C066, 0 4px 0 -1px #E2C066, 0 4px 12px rgba(0,0,0,.5); }
+.gemas { position: absolute; left: 0; right: 0; bottom: 0; height: var(--h);
+  background: radial-gradient(circle at 50% 45%, color-mix(in srgb, var(--c) 45%, #fff) 0 1.6px, transparent 2.2px) 0 0 / 6px 6px,
+              linear-gradient(180deg, color-mix(in srgb, var(--c) 75%, #fff), var(--c));
+  box-shadow: 0 0 12px color-mix(in srgb, var(--c) 70%, transparent); }
+.reloj img { width: 30px; height: 30px; object-fit: contain; }
+.reloj b { font-size: .78rem; color: var(--gold-soft); font-variant-numeric: tabular-nums; }
 .pc-row { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--line); }
 .pc-row:last-child { border-bottom: 0; }
 .pc-pos { width: 14px; color: var(--muted); font-weight: 700; font-size: .85rem; flex: none; }
@@ -149,6 +190,7 @@ header[data-testid="stHeader"], section[data-testid="stSidebar"], [data-testid="
 .pronostico { background: rgba(201,162,77,.08); border: 1px solid rgba(201,162,77,.35); border-radius: 12px;
   padding: 10px 14px; font-size: .84rem; color: var(--text); line-height: 1.45; }
 .pronostico b { color: var(--gold-soft); }
+.travesura { margin-top: 6px; font-family: 'Cinzel', serif; color: var(--gold); letter-spacing: 1px; font-size: .78rem; }
 
 /* ---------- PC vs. celular ---------- */
 @media (min-width: 701px) { .solo-movil, .stElementContainer:has(.solo-movil) { display: none; } }
@@ -162,9 +204,12 @@ header[data-testid="stHeader"], section[data-testid="stSidebar"], [data-testid="
   .tm { gap: 8px; }
   .tm img { width: 22px; height: 22px; }
   .tm b { font-size: .84rem; }
+  .topbar { min-height: 92px; padding: 12px 14px; align-items: flex-end;
+    background-position: 0 0, 0 0, right 40%; }
   .tb-t { font-size: 1rem; white-space: nowrap; }
+  .tb-r { align-self: flex-start; }
+  .tb-t img { width: 36px; height: 36px; }
   .solo-pc-i { display: none; }
-  .tb-t img { width: 28px; height: 28px; }
   .st-key-nav button p { font-size: .84rem; }
   .casa-head { flex-wrap: wrap; }
   .casa-head > img { width: 52px; height: 52px; }

@@ -105,22 +105,25 @@ def auto_actualizar():
 
 # ---------- Componentes ----------
 def barra_superior(casa: str | None):
-    """Barra de título como la de X; toma el color de la casa elegida."""
+    """Barra de título como la de X, sobre el castillo de la portada; toma el color de la casa elegida."""
     consultado = df_all.attrs.get("consultado")
-    hora = f" · {consultado:%H:%M}" if consultado else ""
+    hora = f'<span class="solo-pc-i"> · </span>{consultado:%H:%M}' if consultado else ""
     color = _color(casa) if casa else "#5A1A1A"
     titulo = (f'<img src="{escudo(casa)}" alt="">Casa {casa}' if casa
-              else '🏆 <span class="solo-pc-i">El </span>Cáliz de los Campeones')
+              else (f'<img src="{img_uri("caliz.png")}" alt="">' if img_uri("caliz.png") else "🏆")
+              + ' <span class="solo-pc-i">El </span>Cáliz de los Campeones')
     if pronostico:
         faltan = (INICIO - date.today()).days
-        etapa = f"Pronóstico · empieza el {INICIO:%d/%m}" + (f" (faltan {faltan} días)" if faltan > 0 else "")
+        etapa = f"🔮 Pronóstico · el torneo empieza el {INICIO:%d/%m}" + (f" (faltan {faltan} días)" if faltan > 0 else "")
     else:
         dia = (corte - comp_actual.inicio).days + 1
         total = (comp_actual.fin - comp_actual.inicio).days + 1
-        etapa = f"{comp_actual.nombre} · día {min(dia, total)} de {total}"
-    html(f"""<div class="topbar" style="--c:{color}">
+        etapa = f"⚡ {comp_actual.nombre} · día {min(dia, total)} de {total}"
+    # Banda y cáliz: si están las imágenes nuevas en assets/ (banda.jpg, caliz.png) se usan esas
+    banda = img_uri("banda.jpg") or img_uri("portada-banda.jpg")
+    html(f"""<div class="topbar" style="--c:{color}; --portada:url('{banda}')">
       <div class="tb-t">{titulo}</div>
-      <div class="tb-r"><span class="live">En vivo{hora}</span></div>
+      <div class="tb-r"><span class="live"><span class="solo-pc-i">En vivo</span>{hora}</span></div>
     </div><div class="etapa">{etapa}</div>""")
 
 
@@ -130,7 +133,7 @@ def aviso_pronostico():
     comp = COMPETENCIAS[0]
     meta = (f" Sin presupuesto cargado, la meta es la venta del año pasado "
             f"+{DESAFIOS_SSS.get(comp.inicio.month, 0):.0%}.") if pronostico["referencial"] else ""
-    texto = (f"🔮 Así quedaría <b>{comp.nombre}</b> con la venta real del {pronostico['desde']:%d/%m} "
+    texto = (f"🔮 <b>La profecía:</b> así quedaría <b>{comp.nombre}</b> con la venta real del {pronostico['desde']:%d/%m} "
              f"al {pronostico['hasta']:%d/%m}. Los puntos todavía no cuentan.{meta}")
     html(f'<div class="pronostico">{texto}</div>')
 
@@ -156,27 +159,37 @@ def tabla_posiciones(r: pd.DataFrame, corte_premio: int | None = None, marcar: s
           <td class="n pc {crece}">{_pct(x['sss'], True)}</td><td class="n pc">{_pct(x['fidelizacion'])}</td>
           <td class="n pc">{x['venta']:,.0f}</td>"""
         col_premio = f'<td class="n oro">{soles(x["premio"])}</td>' if premio else ""
-        filas += f"""<tr class="{cls}"><td class="num">{pos}</td>
+        sello = f'<span class="sello s{pos}">{pos}</span>' if pos <= 3 else pos
+        filas += f"""<tr class="{cls}"><td class="num">{sello}</td>
           <td><div class="tm"><img src="{escudo(x['casa'])}" alt="{x['casa']}"><b>{x['tienda']}{nota}</b>{gana}</div></td>
           <td class="n pts">{int(x['puntos'])}</td><td class="n {cumple}">{_pct(x['cumplimiento'])}</td>
           {extra}{col_premio}</tr>"""
     th_extra = "" if compacta else ('<th class="n pc">VENTA</th><th class="n pc">BONUS</th><th class="n pc">SSS</th>'
                                     '<th class="n pc">FID</th><th class="n pc">VENTA S/</th>')
     th_premio = '<th class="n">PREMIO</th>' if premio else ""
-    return f"""<div class="std-wrap">{titulo}<table class="std"><thead><tr><th class="num">#</th><th>TIENDA</th>
+    return f"""<div class="std-wrap">{titulo}<table class="std"><thead><tr><th class="num">#</th><th>MAGO</th>
       <th class="n">PTS</th><th class="n">% PPTO</th>{th_extra}{th_premio}</tr></thead>
       <tbody>{filas}</tbody></table></div>"""
 
 
+def relojes_casas() -> str:
+    """Los relojes de arena de la Copa de las Casas: las gemas suben con los puntos de cada casa."""
+    tope = max(casas["puntos"].max(), 1)
+    relojes = "".join(f"""<div class="reloj" style="--c:{_color(r['casa'])}; --h:{max(r['puntos'] / tope, .04):.0%}">
+        <div class="tubo"><div class="gemas"></div></div><img src="{escudo(r['casa'])}" alt="{r['casa']}">
+        <b>{int(r['puntos']):,}</b></div>""" for _, r in casas.iterrows())
+    return f'<div class="relojes">{relojes}</div>'
+
+
 def panel_casas(clase: str = ""):
-    """Las 5 casas en una tarjeta, como el 'Who to follow' de X."""
+    """Las 5 casas en una tarjeta, como el 'Who to follow' de X, con sus relojes de arena."""
     filas = ""
     for i, r in casas.iterrows():
         filas += f"""<div class="pc-row" style="--c:{_color(r['casa'])}">
           <span class="pc-pos">{i + 1}</span><img src="{escudo(r['casa'])}" alt="">
           <div class="pc-nom"><b>{r['casa']}</b><small>{_pct(r['cumplimiento'])} ppto · SSS {_pct(r['sss'], True)}</small></div>
-          <div class="pc-pts">{int(r['puntos']):,}<small>{r['puntos_prom']:.0f} x tienda</small></div></div>"""
-    html(f'<div class="card {clase}"><div class="card-h">Casas</div>{filas}</div>')
+          <div class="pc-pts">{int(r['puntos']):,}<small>{r['puntos_prom']:.0f} x mago</small></div></div>"""
+    html(f'<div class="card {clase}"><div class="card-h">Copa de las Casas</div>{relojes_casas()}{filas}</div>')
 
 
 def panel_retail(clase: str = ""):
@@ -203,7 +216,7 @@ def cabecera_casa(casa: str, r: pd.DataFrame):
     puesto = int(casas.index[casas["casa"] == casa][0]) + 1
     html(f"""<div class="casa-head" style="--c:{_color(casa)}">
       <img src="{escudo(casa, 256)}" alt="{casa}">
-      <div><b>Casa {casa}</b><small>{CASAS[casa]['animal']} · {len(r)} tiendas · #{puesto} de {len(casas)}</small></div>
+      <div><b>Casa {casa}</b><small>{CASAS[casa]['animal']} · {len(r)} magos · #{puesto} de {len(casas)}</small></div>
       <div class="ch-stats"><div><b>{int(res['puntos']):,}</b><span>puntos</span></div>
         <div><b>{_pct(res['cumplimiento'])}</b><span>% ppto</span></div>
         <div><b>{_pct(res['sss'], True)}</b><span>SSS</span></div></div>
@@ -217,7 +230,8 @@ def pie():
         aviso_fid, regla_bi = df_all.attrs["fidelizacion"]
         partes.append(("💳 " if regla_bi else "⚠️ ") + aviso_fid +
                       ("" if regla_bi else " Mientras tanto la fidelización se calcula por RUC/DNI."))
-    html('<div class="pie">' + " · ".join(partes[:2]) + "<br>" + "<br>".join(partes[2:]) + "</div>")
+    html('<div class="pie">' + " · ".join(partes[:2]) + "<br>" + "<br>".join(partes[2:])
+         + '<div class="travesura">✨ Travesura realizada ✨</div></div>')
 
 
 # ---------- Vistas ----------
@@ -241,7 +255,7 @@ def vista_posiciones():
         if casa:
             cabecera_casa(casa, r)
         texto = st.text_input("Buscar tienda", key="buscar", label_visibility="collapsed",
-                              placeholder="🔎 Buscar tienda")
+                              placeholder="🔎 Buscar mago (tienda)")
         zona = periodo != periodos[0]
         r["gana"] = (r.groupby("casa").cumcount() + 1 <= GANADORES_POR_CASA) if zona else False
         if texto.strip():
