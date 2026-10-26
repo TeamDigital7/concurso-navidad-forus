@@ -258,3 +258,9 @@ header[data-testid="stHeader"], section[data-testid="stSidebar"], [data-testid="
   .grilla { grid-template-columns: 1fr; }
   .comp-pago { text-align: left; }
 }
+
+/* Botones para descargar el material del concurso (Reglas) */
+.descargas-h { margin-bottom: 0 !important; }
+[data-testid="stDownloadButton"] button { background: linear-gradient(180deg, #F1D791, #C9A24D) !important;
+  color: #2a1a05 !important; border: 0 !important; border-radius: 12px !important; min-height: 46px; font-weight: 700; }
+[data-testid="stDownloadButton"] button p { font-weight: 700; }

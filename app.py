@@ -435,7 +435,29 @@ def como_se_ganan_puntos():
         <th class="n">SE PAGA</th></tr></thead><tbody>{pago}</tbody></table></div></div>""")
 
 
+# Material oficial del concurso para descargar desde Reglas: se muestra un botón por cada archivo
+# que exista en assets/ (el PPT y, si se sube, su versión en PDF, que se abre mejor en el celular).
+DESCARGAS = [
+    ("concurso.pptx", "📥 Descargar el PPT del concurso",
+     "application/vnd.openxmlformats-officedocument.presentationml.presentation"),
+    ("concurso.pdf", "📄 Descargar en PDF", "application/pdf"),
+]
+
+
+def descargas_concurso():
+    archivos = [(ASSETS / n, n, t, m) for n, t, m in DESCARGAS if (ASSETS / n).exists()]
+    if not archivos:
+        return
+    html('<div class="card-h descargas-h">Material del concurso</div>')
+    cols = st.columns(len(archivos))
+    for col, (ruta, nombre, texto, mime) in zip(cols, archivos):
+        with col:
+            st.download_button(texto, ruta.read_bytes(), file_name=f"Forus-Caliz-de-los-Campeones-{nombre}",
+                               mime=mime, use_container_width=True, type="primary", key=f"dl_{nombre}")
+
+
 def vista_reglas():
+    descargas_concurso()
     como_se_ganan_puntos()
     rango = "".join(f"<li>Retail desde {d:.1%}: se paga el <b>{fct:.0%}</b> del premio</li>" for d, fct in RANGO_PAGO)
     desafios = "".join(f"<li>{'Noviembre' if m == 11 else 'Diciembre'}: SSS del canal +{v:.0%}</li>"
