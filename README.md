@@ -98,3 +98,12 @@ ven las 4 competencias, sus
 ganadores, el calendario y la Copa con las reglas reales. Antes del 01/11 viene encendido; después
 queda como opción. Si no hay presupuesto para set–oct, la meta es la venta del año pasado + el
 desafío SSS del mes simulado (`data.cargar_simulacion`).
+
+## Que la app no se duerma
+
+Streamlit Community Cloud duerme las apps sin visitas por varias horas. La tarea
+`.github/workflows/mantener-despierta.yml` abre la app cada 3 horas con un navegador real
+(`.github/scripts/despertar.py`) y, si está dormida, aprieta «get this app back up». Se puede correr
+a mano desde la pestaña **Actions** → «Mantener despierta la app» → *Run workflow*. Como el repo es
+público, cada corrida vuelve a habilitar la tarea para que GitHub no la apague a los 60 días sin
+actividad.
