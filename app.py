@@ -185,8 +185,8 @@ def tabla_posiciones(r: pd.DataFrame, corte_premio: int | None = None,
                      compacta: bool = False, titulo: str = "") -> str:
     """Tabla de posiciones estilo X: # · escudo + tienda · columnas cortas.
 
-    En el celular solo quedan PTS y % PPTO; el resto se ve en PC. `corte_premio` dibuja la línea
-    verde bajo ese puesto (los que ganan premio).
+    En el celular se ven todas las columnas: la tabla se desliza de lado con # y el mago fijos.
+    `corte_premio` dibuja la línea verde bajo ese puesto (los que ganan premio).
     Devuelve el HTML (para poder armar grillas de varias tablas en un solo bloque).
     """
     filas = ""
@@ -207,7 +207,8 @@ def tabla_posiciones(r: pd.DataFrame, corte_premio: int | None = None,
           {extra}</tr>"""
     th_extra = "" if compacta else ('<th class="n pc">VENTA</th><th class="n pc">BONUS</th><th class="n pc">SSS</th>'
                                     '<th class="n pc">FID</th><th class="n pc">VENTA S/</th>')
-    return f"""<div class="std-wrap">{titulo}<table class="std"><thead><tr><th class="num">#</th><th>MAGO</th>
+    desliza = "" if compacta else '<div class="desliza">Desliza la tabla → para ver todas las columnas</div>'
+    return f"""<div class="std-wrap">{titulo}{desliza}<table class="std"><thead><tr><th class="num">#</th><th>MAGO</th>
       <th class="n">PTS</th><th class="n">% PPTO</th>{th_extra}</tr></thead>
       <tbody>{filas}</tbody></table></div>"""
 
@@ -284,9 +285,9 @@ def selector_periodo() -> str:
 
     def _etiqueta(o: str) -> str:
         if o == ACUMULADO:
-            return "🏆  Torneo completo · acumulado (Copa del Mejor Mago)"
+            return "🏆 Acumulado · Copa del Mejor Mago"
         c = next(c for c in COMPETENCIAS if c.nombre == o)
-        return f"⚡  {c.nombre} · {c.inicio:%d/%m}–{c.fin:%d/%m} · {_estado_comp(c)}"
+        return f"⚡ {c.nombre} ({c.inicio:%d/%m}–{c.fin:%d/%m}) · {_estado_comp(c)}"
 
     return st.selectbox("Periodo", opciones, key="periodo", format_func=_etiqueta,
                         label_visibility="collapsed")

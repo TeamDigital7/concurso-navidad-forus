@@ -203,12 +203,26 @@ header[data-testid="stHeader"], section[data-testid="stSidebar"], [data-testid="
 .st-key-simulacion label p { font-size: .84rem; color: var(--muted); }
 .travesura { margin-top: 6px; font-family: 'Cinzel', serif; color: var(--gold); letter-spacing: 1px; font-size: .78rem; }
 
+.desliza { display: none; }
+/* Desplegable: opciones largas en varias líneas en vez de cortarse */
+[role="listbox"] [role="option"] { white-space: normal !important; height: auto !important; line-height: 1.3; }
+
 /* ---------- PC vs. celular ---------- */
 @media (min-width: 701px) { .solo-movil, .stElementContainer:has(.solo-movil) { display: none; } }
 @media (max-width: 700px) {
   .block-container { padding: .6rem .7rem 2rem !important; }
   .solo-pc, .stElementContainer:has(.solo-pc) { display: none; }
-  .std .pc { display: none; }
+  /* Todas las columnas también en el celular: la tabla se desliza de lado con # y mago fijos */
+  .std-wrap { -webkit-overflow-scrolling: touch; }
+  .std { min-width: max-content; }
+  .std th, .std td { font-size: .8rem; }
+  .std th:nth-child(-n+2), .std td:nth-child(-n+2) { position: sticky; z-index: 1; background: var(--panel) !important; }
+  .std th:nth-child(1), .std td:nth-child(1) { left: 0; min-width: 34px; }
+  .std th:nth-child(2), .std td:nth-child(2) { left: 34px; max-width: 150px; box-shadow: 6px 0 8px -6px rgba(0,0,0,.6); }
+  .std td:nth-child(2) .tm b { white-space: normal; font-size: .78rem; }
+  .std-wrap.interior .std th, .std-wrap.interior .std td { position: static; box-shadow: none; max-width: none; }
+  .desliza { display: block; color: var(--muted); font-size: .7rem; padding: 8px 2px 0; position: sticky; left: 0; }
+  .st-key-periodo input[role="combobox"] { font-size: .86rem !important; }
   .std-wrap { padding: 2px 10px 4px; }
   .std td { padding: 10px 5px; }
   .std th { padding: 10px 5px 8px; }
