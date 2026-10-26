@@ -127,7 +127,6 @@ header[data-testid="stHeader"], section[data-testid="stSidebar"], [data-testid="
 .sello.s1 { background: radial-gradient(circle at 35% 30%, #FFF1B8, #E2B33C 55%, #9C7414); }
 .sello.s2 { background: radial-gradient(circle at 35% 30%, #FFFFFF, #C9CED6 55%, #7D838D); }
 .sello.s3 { background: radial-gradient(circle at 35% 30%, #FFD9B0, #C8823F 55%, #7E4A1C); }
-.gana { font-size: .85rem; flex: none; }
 
 /* ---------- Tarjetas (panel derecho) ---------- */
 .card { background: var(--panel); border-radius: 16px; padding: 14px 16px;
@@ -192,6 +191,9 @@ header[data-testid="stHeader"], section[data-testid="stSidebar"], [data-testid="
 
 /* ---------- Textos ---------- */
 .reglas { margin: 0; padding-left: 20px; color: var(--text); font-size: .9rem; line-height: 1.55; }
+.reglas-p { margin: 0 0 10px; color: var(--text); font-size: .9rem; line-height: 1.55; }
+.std-wrap.interior { background: var(--panel-2); margin: 4px 0 12px; border-color: rgba(201,162,77,.1); }
+.std-wrap.interior .std td { white-space: normal; }
 .nota { color: var(--muted); font-size: .76rem; margin: 2px 4px; }
 .pie { color: var(--muted); font-size: .72rem; margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--line);
   text-align: center; line-height: 1.6; }
