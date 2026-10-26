@@ -440,7 +440,7 @@ def como_se_ganan_puntos():
 DESCARGAS = [
     ("concurso.pptx", "📥 Descargar el PPT del concurso",
      "application/vnd.openxmlformats-officedocument.presentationml.presentation"),
-    ("concurso.pdf", "📄 Descargar en PDF", "application/pdf"),
+    ("concurso.pdf", "📥 Descargar la presentación del concurso (PDF)", "application/pdf"),
 ]
 
 
