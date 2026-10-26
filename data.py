@@ -7,7 +7,8 @@ La consulta debe devolver estas columnas (una fila por tienda y día):
     fecha, tienda, venta, presupuesto, venta_ly, tickets, tickets_fidelizados, unidades
 La `casa` se asigna con concurso.TIENDA_A_CASA (por nombre de tienda).
 """
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
@@ -18,6 +19,8 @@ from concurso import COMPETENCIAS, DESAFIOS_SSS, FIN, INICIO, TIENDA_A_CASA
 COLUMNAS = ["fecha", "tienda", "venta", "presupuesto", "venta_ly", "tickets",
             "tickets_fidelizados", "unidades"]
 FECHA_DEMO = date(2026, 12, 9)  # hasta dónde llegan los datos de ejemplo
+ACTUALIZAR_CADA_MIN = 10  # cada cuánto la app se refresca sola (el caché vence 30 s antes)
+LIMA = ZoneInfo("America/Lima")
 
 
 # Tabla de venta retail que usa ForusIQ/Forusight (src/forusight/data/fuentes.py).
@@ -138,17 +141,19 @@ def _normalizar(df: pd.DataFrame) -> pd.DataFrame:
             df[col] = pd.to_numeric(df[col], errors="coerce").astype(float).fillna(0.0)
     df["tienda"] = df["tienda"].astype(str).str.strip().str.upper()
     df["casa"] = df["tienda"].map(TIENDA_A_CASA)
-    return df[df["casa"].notna()].reset_index(drop=True)
+    df = df[df["casa"].notna()].reset_index(drop=True)
+    df.attrs["consultado"] = datetime.now(LIMA)  # hora de la consulta, para mostrarla en la app
+    return df
 
 
-@st.cache_data(ttl=900, show_spinner="Consultando la venta…")
+@st.cache_data(ttl=ACTUALIZAR_CADA_MIN * 60 - 30, show_spinner="Consultando la venta…")
 def cargar_datos() -> tuple[pd.DataFrame, str]:
     cfg = config_bigquery()
     df, fuente = (_leer_bigquery(cfg), "BigQuery") if cfg else (_ejemplo(), "Datos de ejemplo")
     return _normalizar(df), fuente
 
 
-@st.cache_data(ttl=900, show_spinner="Armando el pronóstico…")
+@st.cache_data(ttl=ACTUALIZAR_CADA_MIN * 60 - 30, show_spinner="Armando el pronóstico…")
 def cargar_pronostico() -> tuple[pd.DataFrame, str, date, date, bool]:
     """Antes del concurso: la venta real de los últimos días jugada como si fuera la 1ª competencia.
 
@@ -168,7 +173,7 @@ def cargar_pronostico() -> tuple[pd.DataFrame, str, date, date, bool]:
         return df, fuente, inicio, fin, False
     hasta = df["fecha"].max()
     desde = hasta - pd.Timedelta(days=n - 1)
-    df = df[df["fecha"] >= desde].copy()
+    df = df[df["fecha"] >= desde].copy()  # .copy() conserva attrs["consultado"]
     df["fecha"] += pd.Timestamp(comp.inicio) - desde
     referencial = df["presupuesto"].sum() == 0
     if referencial:

@@ -69,6 +69,12 @@ y CLB Outlet Jockey en la tabla de venta.
 
 Sin secrets la app usa datos de ejemplo.
 
+## En vivo
+
+La app se refresca sola cada 10 minutos (`data.ACTUALIZAR_CADA_MIN`) y muestra arriba la hora de
+la última consulta a BigQuery. Sirve para dejarla abierta en una pantalla. Los datos son tan
+frescos como la carga de `ft_pe_venta_retail`.
+
 ## Pronóstico antes del 01/11
 
 Mientras no hay venta del concurso, la app muestra un **pronóstico**: toma los últimos 15 días con
