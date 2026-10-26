@@ -194,6 +194,7 @@ header[data-testid="stHeader"], section[data-testid="stSidebar"], [data-testid="
 .pronostico { background: rgba(201,162,77,.08); border: 1px solid rgba(201,162,77,.35); border-radius: 12px;
   padding: 10px 14px; font-size: .84rem; color: var(--text); line-height: 1.45; }
 .pronostico b { color: var(--gold-soft); }
+.st-key-simulacion label p { font-size: .84rem; color: var(--muted); }
 .travesura { margin-top: 6px; font-family: 'Cinzel', serif; color: var(--gold); letter-spacing: 1px; font-size: .78rem; }
 
 /* ---------- PC vs. celular ---------- */
