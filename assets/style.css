@@ -36,6 +36,10 @@ header[data-testid="stHeader"], section[data-testid="stSidebar"], [data-testid="
 [data-testid="stSidebarCollapsedControl"] { display: none !important; }
 .block-container { padding: 1rem 1.2rem 2.5rem !important; max-width: 1220px; }
 [data-testid="stVerticalBlock"] { gap: .75rem; }
+/* Streamlit le pone -16px abajo a cada bloque de markdown (compensa el margen de un párrafo);
+   nuestras tarjetas no son párrafos y quedaban encimadas 4px sobre el bloque siguiente. */
+[data-testid="stMarkdownContainer"]:has(> .topbar, > .etapa, > .pronostico, > .card, > .std-wrap, > .casa-head,
+  > .nota, > .grilla, > .pie) { margin-bottom: 0 !important; }
 .pos { color: var(--green) !important; }
 .neg { color: var(--red) !important; }
 .oro { color: var(--gold-soft) !important; }
@@ -62,7 +66,7 @@ header[data-testid="stHeader"], section[data-testid="stSidebar"], [data-testid="
 .tb-r { flex: none; }
 .live { color: rgba(255,255,255,.85); font-size: .78rem; font-weight: 500; white-space: nowrap; }
 .live::before { content: "●"; color: var(--green); margin-right: 6px; }
-.etapa { color: var(--muted); font-size: .8rem; margin: -2px 4px 0; }
+.etapa { color: var(--muted); font-size: .8rem; margin: 2px 4px 0; }
 
 /* ---------- Pestañas (Posiciones · Competencias · …) ---------- */
 .st-key-nav, .st-key-periodo, .st-key-casa, .st-key-nav [data-testid="stButtonGroup"],

@@ -87,6 +87,24 @@ def _pct(x: float, signo: bool = False, dec: int = 0) -> str:
     return f"{x:+.{dec}%}" if signo else f"{x:.{dec}%}"
 
 
+def selector(etiqueta: str, opciones: list[str], clave: str) -> str:
+    """Selector segmentado que no se puede dejar vacío: tocar la opción activa la mantiene.
+
+    st.segmented_control deselecciona al tocar la opción ya elegida (queda en None y pierde el
+    resaltado); el callback devuelve la última opción elegida.
+    """
+    ultima = f"_ultima_{clave}"
+
+    def _mantener():
+        if st.session_state.get(clave) is None:
+            st.session_state[clave] = st.session_state.get(ultima, opciones[0])
+
+    valor = st.segmented_control(etiqueta, opciones, default=opciones[0], key=clave, on_change=_mantener,
+                                 label_visibility="collapsed", width="stretch") or opciones[0]
+    st.session_state[ultima] = valor
+    return valor
+
+
 def _color(casa: str) -> str:
     # Curiosity es azul casi negro: en la barra de color se aclara para que se distinga del fondo
     return "#3B5498" if casa == "Curiosity" else CASAS[casa]["color"]
@@ -240,10 +258,8 @@ def vista_posiciones():
         aviso_pronostico()
         # Celular: Canal Retail arriba, luego la tabla y las casas al final (en PC van a la derecha)
         panel_retail("solo-movil")
-        periodo = st.segmented_control("Periodo", periodos, default=periodos[0], key="periodo",
-                                       label_visibility="collapsed", width="stretch") or periodos[0]
-        casa = st.segmented_control("Casa", ["Todas"] + list(CASAS), default="Todas", key="casa",
-                                    label_visibility="collapsed", width="stretch") or "Todas"
+        periodo = selector("Periodo", periodos, "periodo")
+        casa = selector("Casa", ["Todas"] + list(CASAS), "casa")
         casa = None if casa == "Todas" else casa
         if periodo == periodos[0]:
             base = rank_all
@@ -351,9 +367,7 @@ st.session_state["ultima_carga"] = time.time()
 auto_actualizar()
 barra_superior(st.session_state.get("casa") if st.session_state.get("casa") in CASAS
                and st.session_state.get("nav", "Posiciones") == "Posiciones" else None)
-vista = st.segmented_control("Sección", ["Posiciones", "Competencias", "Calendario", "Reglas"],
-                             default="Posiciones", key="nav", label_visibility="collapsed",
-                             width="stretch") or "Posiciones"
+vista = selector("Sección", ["Posiciones", "Competencias", "Calendario", "Reglas"], "nav")
 if vista == "Posiciones":
     vista_posiciones()
 elif vista == "Competencias":
