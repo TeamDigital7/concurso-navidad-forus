@@ -60,7 +60,8 @@ if df_all.empty:
     pronostico = {"desde": p_desde, "hasta": p_hasta, "referencial": p_referencial}
     desfase = COMPETENCIAS[0].inicio - p_desde
 if df_all["presupuesto"].sum() == 0:
-    st.warning("No hay presupuesto cargado: falta configurar `presupuesto_table` en los secrets. "
+    st.warning(df_all.attrs.get("presupuesto") or
+               "No hay presupuesto cargado: falta configurar `presupuesto_table` en los secrets. "
                "Sin presupuesto no se puede calcular el cumplimiento ni los puntos por venta.")
 corte = df_all["fecha"].max().date()
 pt_all = puntos_por_tramo(df_all, hasta=corte)

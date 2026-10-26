@@ -98,7 +98,7 @@ def _tabla_bi(cfg: dict) -> str:
     return TABLA_VENTAS_BI
 
 
-def _columnas_bi(client, bigquery, tabla: str) -> dict[str, str]:
+def _columnas(client, bigquery, tabla: str) -> dict[str, str]:
     """Nombre → tipo de las columnas de la tabla (INFORMATION_SCHEMA)."""
     proyecto, dataset, nombre = tabla.replace("`", "").split(".")
     filas = client.query(
@@ -109,11 +109,12 @@ def _columnas_bi(client, bigquery, tabla: str) -> dict[str, str]:
     return {f.column_name: f.data_type for f in filas}
 
 
-def _mapear_bi(cfg: dict, columnas: dict[str, str]) -> dict[str, str]:
+def _mapear(cfg: dict, prefijo: str, alias_por_campo: dict, columnas: dict[str, str]) -> dict[str, str]:
+    """Campo → columna: la fijada en los secrets (<prefijo>_<campo>) o el primer alias que exista."""
     por_minuscula = {c.lower(): c for c in columnas}
     mapa = {}
-    for campo, alias in ALIAS_BI.items():
-        fijo = cfg.get(f"fidelizacion_col_{campo}")
+    for campo, alias in alias_por_campo.items():
+        fijo = cfg.get(f"{prefijo}_{campo}")
         if fijo:
             mapa[campo] = fijo
             continue
@@ -154,17 +155,29 @@ def _codigo(x) -> str:
     return s.lstrip("0") or s
 
 
+def _traducir_tiendas(client, bigquery, df: pd.DataFrame, tabla_venta: str, params) -> pd.DataFrame:
+    """`clave` → `tienda`. Si viene por código de local, se traduce con nlocal_lv → nombre_tienda."""
+    if not df["clave"].isin(list(TIENDA_A_CASA)).any():
+        codigos = client.query(
+            f"SELECT DISTINCT CAST(nlocal_lv AS STRING) AS cod, UPPER(TRIM(nombre_tienda)) AS tienda "
+            f"FROM `{tabla_venta}` WHERE DATE(fecmov_lv) BETWEEN DATE_SUB(@fin, INTERVAL 60 DAY) AND @fin",
+            job_config=bigquery.QueryJobConfig(query_parameters=params)).to_dataframe()
+        nombres = {_codigo(c): t for c, t in zip(codigos["cod"], codigos["tienda"])}
+        df = df.assign(clave=df["clave"].map(lambda c: nombres.get(_codigo(c), c)))
+    return df.rename(columns={"clave": "tienda"})
+
+
 def _leer_fidelizacion(client, cfg: dict, bigquery, inicio: date, fin: date,
                        tabla_venta: str) -> tuple[pd.DataFrame | None, str]:
     """Fidelización por día y tienda con la regla de Power BI. Devuelve (datos o None, aviso)."""
     tabla = _tabla_bi(cfg)
     try:
-        columnas = _columnas_bi(client, bigquery, tabla)
+        columnas = _columnas(client, bigquery, tabla)
     except Exception as e:  # sin permiso de metadatos, tabla mal escrita, etc.
         return None, f"No se pudo leer `{tabla}` ({type(e).__name__})."
     if not columnas:
         return None, f"No se encontró la tabla `{tabla}`."
-    mapa = _mapear_bi(cfg, columnas)
+    mapa = _mapear(cfg, "fidelizacion_col", ALIAS_BI, columnas)
     faltan = [c for c in OBLIGATORIAS_BI if c not in mapa]
     if faltan:
         return None, (f"En `{tabla}` no se encontraron las columnas de {', '.join(faltan)}. "
@@ -178,15 +191,7 @@ def _leer_fidelizacion(client, cfg: dict, bigquery, inicio: date, fin: date,
         return None, f"Falló la consulta de fidelización en `{tabla}` ({type(e).__name__}: {str(e)[:200]})."
     if fid.empty:
         return None, f"`{tabla}` no tiene ventas del {inicio:%d/%m} al {fin:%d/%m}."
-    # La tienda puede venir por nombre o por código de local: los códigos se traducen con la venta
-    if not fid["clave"].isin(list(TIENDA_A_CASA)).any():
-        codigos = client.query(
-            f"SELECT DISTINCT CAST(nlocal_lv AS STRING) AS cod, UPPER(TRIM(nombre_tienda)) AS tienda "
-            f"FROM `{tabla_venta}` WHERE DATE(fecmov_lv) BETWEEN @inicio AND @fin",
-            job_config=bigquery.QueryJobConfig(query_parameters=params)).to_dataframe()
-        nombres = {_codigo(c): t for c, t in zip(codigos["cod"], codigos["tienda"])}
-        fid["clave"] = fid["clave"].map(lambda c: nombres.get(_codigo(c), c))
-    fid = fid.rename(columns={"clave": "tienda"})
+    fid = _traducir_tiendas(client, bigquery, fid, tabla_venta, params)
     fid["fecha"] = pd.to_datetime(fid["fecha"])
     for c in ("tickets_bi", "fidelizados_bi"):
         fid[c] = pd.to_numeric(fid[c], errors="coerce").astype(float)
@@ -221,22 +226,72 @@ def config_bigquery() -> dict | None:
     return cfg
 
 
-def _leer_presupuesto(client, cfg: dict, bigquery, inicio: date, fin: date) -> pd.DataFrame | None:
-    """Presupuesto diario por tienda: tabla configurable (fecha, tienda, presupuesto)."""
+# Nombres posibles de las columnas de la tabla de presupuesto (se fijan con presupuesto_col_<campo>)
+ALIAS_PPTO = {
+    "fecha": ["fecha", "fecha_presupuesto", "fecha_ppto", "fecha_dia", "dia", "fecha_venta", "fec",
+              "periodo", "date"],
+    "tienda": ["tienda", "nombre_tienda", "nombre_local", "tienda_nombre", "local_nombre", "desc_local",
+               "codigo_local", "cod_local", "codigo_tienda", "cod_tienda", "nlocal_lv", "nlocal", "local",
+               "id_local", "id_tienda", "sucursal", "store"],
+    "valor": ["presupuesto", "ppto", "presupuesto_venta", "ppto_venta", "venta_presupuesto",
+              "monto_presupuesto", "presupuesto_sin_igv", "ppto_sin_igv", "meta", "meta_venta",
+              "monto", "valor", "importe", "budget"],
+}
+
+
+def _leer_presupuesto(client, cfg: dict, bigquery, inicio: date, fin: date,
+                      tabla_venta: str) -> tuple[pd.DataFrame | None, str]:
+    """Presupuesto diario por tienda. Devuelve (datos o None, aviso); nunca rompe la app.
+
+    Si la tabla trae un monto por mes (todas las fechas son día 1), se reparte parejo entre los
+    días del mes.
+    """
     tabla = cfg.get("presupuesto_table")
     if not tabla:
-        return None
+        return None, ("No hay presupuesto cargado: falta configurar `presupuesto_table` en los secrets. "
+                      "Sin presupuesto no se puede calcular el cumplimiento ni los puntos por venta.")
+    try:
+        columnas = _columnas(client, bigquery, tabla)
+    except Exception as e:
+        return None, f"No se pudo leer la tabla de presupuesto `{tabla}` ({type(e).__name__})."
+    if not columnas:
+        return None, f"No se encontró la tabla de presupuesto `{tabla}`."
+    mapa = _mapear(cfg, "presupuesto_col", ALIAS_PPTO, columnas)
+    faltan = [c for c in ALIAS_PPTO if c not in mapa]
+    if faltan:
+        return None, (f"En `{tabla}` no se encontraron las columnas de {', '.join(faltan)}. "
+                      f"Columnas de la tabla: {', '.join(columnas)}. Fíjalas en los secrets con "
+                      f"presupuesto_col_fecha, presupuesto_col_tienda y presupuesto_col_valor.")
+    fecha = _sql_fecha(f"`{mapa['fecha']}`", columnas.get(mapa["fecha"], "DATE"))
     sql = f"""
-        SELECT DATE({cfg.get('presupuesto_col_fecha', 'fecha')}) AS fecha,
-               UPPER(TRIM({cfg.get('presupuesto_col_tienda', 'tienda')})) AS tienda,
-               SUM({cfg.get('presupuesto_col_valor', 'presupuesto')}) AS presupuesto
+        SELECT {fecha} AS fecha, UPPER(TRIM(CAST(`{mapa['tienda']}` AS STRING))) AS clave,
+               SUM(SAFE_CAST(`{mapa['valor']}` AS FLOAT64)) AS presupuesto
         FROM `{tabla}`
-        WHERE DATE({cfg.get('presupuesto_col_fecha', 'fecha')}) BETWEEN @inicio AND @fin
-        GROUP BY fecha, tienda"""
-    return client.query(sql, job_config=bigquery.QueryJobConfig(query_parameters=[
-        bigquery.ScalarQueryParameter("inicio", "DATE", inicio),
-        bigquery.ScalarQueryParameter("fin", "DATE", fin),
-    ])).to_dataframe()
+        WHERE {fecha} BETWEEN DATE_TRUNC(@inicio, MONTH) AND @fin
+        GROUP BY 1, 2"""
+    params = [bigquery.ScalarQueryParameter("inicio", "DATE", inicio),
+              bigquery.ScalarQueryParameter("fin", "DATE", fin)]
+    try:
+        ppto = client.query(sql, job_config=bigquery.QueryJobConfig(query_parameters=params)).to_dataframe()
+    except Exception as e:
+        return None, f"Falló la consulta de presupuesto en `{tabla}` ({type(e).__name__}: {str(e)[:200]})."
+    if ppto.empty:
+        return None, f"`{tabla}` no tiene presupuesto del {inicio:%d/%m} al {fin:%d/%m}."
+    ppto["fecha"] = pd.to_datetime(ppto["fecha"])
+    ppto["presupuesto"] = pd.to_numeric(ppto["presupuesto"], errors="coerce").astype(float).fillna(0.0)
+    ppto = _traducir_tiendas(client, bigquery, ppto, tabla_venta, params)
+    mensual = (ppto["fecha"].dt.day == 1).all() and ppto["fecha"].dt.to_period("M").nunique() == ppto["fecha"].nunique()
+    if mensual:
+        dias = ppto["fecha"].map(lambda f: pd.date_range(f, f + pd.offsets.MonthEnd(0)))
+        ppto["presupuesto"] = ppto["presupuesto"] / dias.map(len)
+        ppto = ppto.assign(fecha=dias).explode("fecha")
+        ppto["fecha"] = pd.to_datetime(ppto["fecha"])
+    ppto = ppto.groupby(["fecha", "tienda"], as_index=False)["presupuesto"].sum()
+    cruzan = ppto["tienda"].isin(list(TIENDA_A_CASA)).sum()
+    if not cruzan:
+        return None, (f"El presupuesto de `{tabla}` no cruza con ninguna tienda del concurso "
+                      f"(ejemplos: {', '.join(ppto['tienda'].drop_duplicates().head(4))}).")
+    return ppto, ""
 
 
 def _leer_bigquery(cfg: dict, inicio: date = INICIO, fin: date = FIN) -> pd.DataFrame:
@@ -257,17 +312,20 @@ def _leer_bigquery(cfg: dict, inicio: date = INICIO, fin: date = FIN) -> pd.Data
         bigquery.ArrayQueryParameter("tiendas", "STRING", list(TIENDA_A_CASA)),
         bigquery.ArrayQueryParameter("genericos", "STRING", list(CLIENTES_GENERICOS)),
     ])).to_dataframe()
-    ppto = _leer_presupuesto(client, cfg, bigquery, inicio, fin)
-    if ppto is None:
-        # Sin tabla de presupuesto no se puede medir cumplimiento: queda en 0 y la app lo avisa
-        venta["presupuesto"] = 0.0
-    elif "presupuesto" not in venta:
-        venta = venta.merge(ppto, on=["fecha", "tienda"], how="left")
-        venta["presupuesto"] = venta["presupuesto"].fillna(0.0)
+    ppto, aviso_ppto = _leer_presupuesto(client, cfg, bigquery, inicio, fin, tabla_venta)
+    if "presupuesto" not in venta:
+        if ppto is None:
+            # Sin presupuesto no se puede medir cumplimiento: queda en 0 y la app avisa por qué
+            venta["presupuesto"] = 0.0
+        else:
+            venta["fecha"] = pd.to_datetime(venta["fecha"])
+            venta = venta.merge(ppto, on=["fecha", "tienda"], how="left")
+            venta["presupuesto"] = venta["presupuesto"].fillna(0.0)
     fid, aviso = _leer_fidelizacion(client, cfg, bigquery, inicio, fin, tabla_venta)
     if fid is not None:
         venta = aplicar_fidelizacion(venta, fid)
     venta.attrs["fidelizacion"] = (aviso, fid is not None)
+    venta.attrs["presupuesto"] = aviso_ppto
     return venta
 
 
