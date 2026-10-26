@@ -59,7 +59,7 @@ venta retail que usa Forusight (ForusIQ): `forus-analitica-prod-datalake.silver.
 | venta | `SUM(venta_total_sin_iva)` por `nombre_tienda` y día (`fecmov_lv`) |
 | venta_ly | la misma consulta 364 días antes (mismo día de la semana) |
 | tickets | `COUNT(DISTINCT nrodoc_lv)` |
-| tickets fidelizados | tickets con `rutcli_lv` de un cliente real (no vacío ni genérico) |
+| tickets fidelizados | regla "Registro Válido" de Power BI sobre `bronze.stg_pe_central_ventas_bi` (ver abajo); si no se puede leer, tickets con `rutcli_lv` de un cliente real |
 | unidades | `SUM(unidades_venta)` |
 | presupuesto | **pendiente**: `presupuesto_table` en los secrets |
 
@@ -68,6 +68,20 @@ de tiendas de ForusIQ. Faltan los nombres de Parfois (4), Olympikus Mega Plaza, 
 y CLB Outlet Jockey en la tabla de venta.
 
 Sin secrets la app usa datos de ejemplo.
+
+## Fidelización (regla de Power BI)
+
+Un ticket es fidelizado si el cliente dejó un correo real, igual que la medida "Registro Válido":
+`ruc_cliente` numérico ≥ 99999991 no cuenta (RUC de empresa y genéricos); tampoco correos que
+empiezan con `be@` o contienen `ecommerce@`, `xxx@` o `@forus`; y el correo debe tener `@`.
+
+`ft_pe_venta_retail` no trae el correo, así que el % se calcula en la tabla ventas_bi
+(`fidelizacion_table`, o `ventas_table` si apunta a una ventas_bi, o
+`forus-analitica-prod-datalake.bronze.stg_pe_central_ventas_bi`) y se aplica a los tickets de la
+venta. Las columnas se detectan solas; si alguna no se encuentra se fija en los secrets con
+`fidelizacion_col_fecha`, `_tienda`, `_documento`, `_tipo_documento`, `_ruc` o `_correo`.
+Los días que ventas_bi todavía no trae quedan con la regla por RUC. La app muestra arriba qué
+regla está usando o por qué no pudo leer la tabla.
 
 ## En vivo
 

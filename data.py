@@ -53,6 +53,162 @@ WHERE a.fecha BETWEEN @inicio AND @fin
 """
 
 
+# ---------- Fidelización con la regla de Power BI ("Registro Válido") ----------
+# Ticket fidelizado = el cliente dejó un correo real. Sale de la tabla que en Power BI es
+# 'perucentral ventas_bi' (ft_pe_venta_retail no trae el correo). Regla, igual que el DAX:
+#   ruc_cliente numérico >= 99999991 → no; correo que empieza con "be@" o contiene "ecommerce@",
+#   "xxx@" o "@forus" → no; correo sin "@" → no. Mayúsculas/minúsculas no importan (SEARCH).
+TABLA_VENTAS_BI = "forus-analitica-prod-datalake.bronze.stg_pe_central_ventas_bi"
+RUC_GENERICO_DESDE = 99999991
+CORREOS_EXCLUIDOS = r"ecommerce@|xxx@|@forus"
+# Nombres posibles de cada columna; se detectan con INFORMATION_SCHEMA (como en ForusIQ) y se
+# pueden fijar en los secrets con fidelizacion_col_<campo> (p. ej. fidelizacion_col_correo).
+ALIAS_BI = {
+    "fecha": ["fecha_transaccion", "fecha", "fecha_venta", "fecmov_lv", "fecmov", "fecha_documento",
+              "fecha_emision", "fecha_comprobante", "fec_doc", "fecha_dia", "dia"],
+    "tienda": ["nombre_tienda", "nombre_local", "tienda_nombre", "local_nombre", "desc_local",
+               "descripcion_local", "nombre_loc", "codigo_local", "cod_local", "nlocal_lv", "nlocal",
+               "local", "codigo_tienda", "cod_tienda", "id_local", "id_tienda", "tienda"],
+    "documento": ["nrodoc_lv", "nrodoc", "nro_documento", "numero_documento", "num_documento",
+                  "nro_doc", "num_doc", "documento", "nro_boleta", "folio", "nro_comprobante",
+                  "numero_comprobante", "id_ticket", "ticket", "id_transaccion", "transaccion"],
+    "tipo_documento": ["tipdoc_lv", "tipdoc", "tipo_documento", "tipo_doc", "tipo_comprobante"],
+    "ruc": ["ruc_cliente", "rutcli_lv", "rut_cliente", "dni_cliente", "doc_cliente",
+            "documento_cliente", "nro_documento_cliente"],
+    "correo": ["correo_cliente", "email_cliente", "mail_cliente", "correo", "email", "mail"],
+}
+OBLIGATORIAS_BI = ("fecha", "tienda", "documento", "correo")
+
+SQL_FIDELIZACION = """
+SELECT {fecha} AS fecha, UPPER(TRIM(CAST({tienda} AS STRING))) AS clave,
+       COUNT(DISTINCT {ticket}) AS tickets_bi,
+       COUNT(DISTINCT IF({valido}, {ticket}, NULL)) AS fidelizados_bi
+FROM `{tabla}`
+WHERE {fecha} BETWEEN @inicio AND @fin
+GROUP BY 1, 2
+"""
+
+
+def _tabla_bi(cfg: dict) -> str:
+    if cfg.get("fidelizacion_table"):
+        return cfg["fidelizacion_table"]
+    # Si en los secrets la tabla de ventas es la ventas_bi, se usa esa
+    if "ventas_bi" in str(cfg.get("ventas_table", "")):
+        return cfg["ventas_table"]
+    return TABLA_VENTAS_BI
+
+
+def _columnas_bi(client, bigquery, tabla: str) -> dict[str, str]:
+    """Nombre → tipo de las columnas de la tabla (INFORMATION_SCHEMA)."""
+    proyecto, dataset, nombre = tabla.replace("`", "").split(".")
+    filas = client.query(
+        f"SELECT column_name, data_type FROM `{proyecto}.{dataset}.INFORMATION_SCHEMA.COLUMNS` "
+        "WHERE table_name = @t",
+        job_config=bigquery.QueryJobConfig(query_parameters=[
+            bigquery.ScalarQueryParameter("t", "STRING", nombre)])).result()
+    return {f.column_name: f.data_type for f in filas}
+
+
+def _mapear_bi(cfg: dict, columnas: dict[str, str]) -> dict[str, str]:
+    por_minuscula = {c.lower(): c for c in columnas}
+    mapa = {}
+    for campo, alias in ALIAS_BI.items():
+        fijo = cfg.get(f"fidelizacion_col_{campo}")
+        if fijo:
+            mapa[campo] = fijo
+            continue
+        encontrada = next((por_minuscula[a] for a in alias if a in por_minuscula), None)
+        if encontrada:
+            mapa[campo] = encontrada
+    return mapa
+
+
+def _sql_fecha(col: str, tipo: str) -> str:
+    if tipo == "STRING":
+        return f"SAFE_CAST(LEFT(TRIM({col}), 10) AS DATE)"
+    if tipo in ("INT64", "NUMERIC", "BIGNUMERIC"):  # 20261025
+        return f"SAFE.PARSE_DATE('%Y%m%d', CAST({col} AS STRING))"
+    return f"DATE({col})"
+
+
+def sql_fidelizacion(tabla: str, mapa: dict[str, str], columnas: dict[str, str]) -> str:
+    correo = f"LOWER(TRIM(IFNULL(CAST(`{mapa['correo']}` AS STRING), '')))"
+    condiciones = [
+        f"NOT STARTS_WITH({correo}, 'be@')",
+        f"NOT REGEXP_CONTAINS({correo}, r'{CORREOS_EXCLUIDOS}')",
+        f"STRPOS({correo}, '@') > 0",
+    ]
+    if "ruc" in mapa:  # VALUE() que falla cuenta como 0 en el DAX
+        condiciones.insert(0, f"IFNULL(SAFE_CAST(TRIM(CAST(`{mapa['ruc']}` AS STRING)) AS BIGNUMERIC), 0)"
+                              f" < {RUC_GENERICO_DESDE}")
+    ticket = f"CAST(`{mapa['documento']}` AS STRING)"
+    if "tipo_documento" in mapa:
+        ticket = f"CONCAT(IFNULL(CAST(`{mapa['tipo_documento']}` AS STRING), ''), '|', {ticket})"
+    return SQL_FIDELIZACION.format(
+        tabla=tabla, tienda=f"`{mapa['tienda']}`", ticket=ticket, valido=" AND ".join(condiciones),
+        fecha=_sql_fecha(f"`{mapa['fecha']}`", columnas.get(mapa["fecha"], "DATE")))
+
+
+def _codigo(x) -> str:
+    s = str(x).strip().upper()
+    return s.lstrip("0") or s
+
+
+def _leer_fidelizacion(client, cfg: dict, bigquery, inicio: date, fin: date,
+                       tabla_venta: str) -> tuple[pd.DataFrame | None, str]:
+    """Fidelización por día y tienda con la regla de Power BI. Devuelve (datos o None, aviso)."""
+    tabla = _tabla_bi(cfg)
+    try:
+        columnas = _columnas_bi(client, bigquery, tabla)
+    except Exception as e:  # sin permiso de metadatos, tabla mal escrita, etc.
+        return None, f"No se pudo leer `{tabla}` ({type(e).__name__})."
+    if not columnas:
+        return None, f"No se encontró la tabla `{tabla}`."
+    mapa = _mapear_bi(cfg, columnas)
+    faltan = [c for c in OBLIGATORIAS_BI if c not in mapa]
+    if faltan:
+        return None, (f"En `{tabla}` no se encontraron las columnas de {', '.join(faltan)}. "
+                      f"Columnas de la tabla: {', '.join(columnas)}.")
+    params = [bigquery.ScalarQueryParameter("inicio", "DATE", inicio),
+              bigquery.ScalarQueryParameter("fin", "DATE", fin)]
+    try:
+        fid = client.query(sql_fidelizacion(tabla, mapa, columnas),
+                           job_config=bigquery.QueryJobConfig(query_parameters=params)).to_dataframe()
+    except Exception as e:
+        return None, f"Falló la consulta de fidelización en `{tabla}` ({type(e).__name__}: {str(e)[:200]})."
+    if fid.empty:
+        return None, f"`{tabla}` no tiene ventas del {inicio:%d/%m} al {fin:%d/%m}."
+    # La tienda puede venir por nombre o por código de local: los códigos se traducen con la venta
+    if not fid["clave"].isin(list(TIENDA_A_CASA)).any():
+        codigos = client.query(
+            f"SELECT DISTINCT CAST(nlocal_lv AS STRING) AS cod, UPPER(TRIM(nombre_tienda)) AS tienda "
+            f"FROM `{tabla_venta}` WHERE DATE(fecmov_lv) BETWEEN @inicio AND @fin",
+            job_config=bigquery.QueryJobConfig(query_parameters=params)).to_dataframe()
+        nombres = {_codigo(c): t for c, t in zip(codigos["cod"], codigos["tienda"])}
+        fid["clave"] = fid["clave"].map(lambda c: nombres.get(_codigo(c), c))
+    fid = fid.rename(columns={"clave": "tienda"})
+    fid["fecha"] = pd.to_datetime(fid["fecha"])
+    for c in ("tickets_bi", "fidelizados_bi"):
+        fid[c] = pd.to_numeric(fid[c], errors="coerce").astype(float)
+    fid = fid.groupby(["fecha", "tienda"], as_index=False)[["tickets_bi", "fidelizados_bi"]].sum()
+    return fid, f"Fidelización con la regla de Power BI (correo válido), de `{tabla}` al {fid['fecha'].max():%d/%m}."
+
+
+def aplicar_fidelizacion(venta: pd.DataFrame, fid: pd.DataFrame) -> pd.DataFrame:
+    """Reemplaza tickets_fidelizados por el % de ventas_bi aplicado a los tickets de la venta.
+
+    Los días o tiendas que ventas_bi todavía no trae (llega con atraso) quedan con la regla por RUC.
+    """
+    v = venta.copy()
+    v["fecha"] = pd.to_datetime(v["fecha"])
+    v = v.merge(fid, on=["fecha", "tienda"], how="left")
+    tasa = v["fidelizados_bi"] / v["tickets_bi"].replace(0, np.nan)
+    tickets = pd.to_numeric(v["tickets"], errors="coerce").astype(float)
+    actual = pd.to_numeric(v["tickets_fidelizados"], errors="coerce").astype(float)
+    v["tickets_fidelizados"] = np.where(tasa.notna(), (tickets * tasa).round(), actual)
+    return v.drop(columns=["tickets_bi", "fidelizados_bi"])
+
+
 def config_bigquery() -> dict | None:
     """Usa los mismos secrets que Catálogo Control Center y ForusIQ ([bigquery] + [gcp_service_account])."""
     try:
@@ -90,8 +246,9 @@ def _leer_bigquery(cfg: dict, inicio: date = INICIO, fin: date = FIN) -> pd.Data
     cred = service_account.Credentials.from_service_account_info(dict(st.secrets["gcp_service_account"]))
     client = bigquery.Client(project=cfg.get("job_project_id") or cfg.get("project_id"),
                              credentials=cred, location=cfg.get("location"))
+    tabla_venta = cfg.get("ventas_retail_table", TABLA_VENTA_RETAIL)
     sql = cfg.get("ventas_query") or SQL_VENTA.format(
-        tabla=cfg.get("ventas_retail_table", TABLA_VENTA_RETAIL),
+        tabla=tabla_venta,
         col_venta=cfg.get("ventas_col_monto", "venta_total_sin_iva"),
     )
     venta = client.query(sql, job_config=bigquery.QueryJobConfig(query_parameters=[
@@ -107,6 +264,10 @@ def _leer_bigquery(cfg: dict, inicio: date = INICIO, fin: date = FIN) -> pd.Data
     elif "presupuesto" not in venta:
         venta = venta.merge(ppto, on=["fecha", "tienda"], how="left")
         venta["presupuesto"] = venta["presupuesto"].fillna(0.0)
+    fid, aviso = _leer_fidelizacion(client, cfg, bigquery, inicio, fin, tabla_venta)
+    if fid is not None:
+        venta = aplicar_fidelizacion(venta, fid)
+    venta.attrs["fidelizacion"] = (aviso, fid is not None)
     return venta
 
 
