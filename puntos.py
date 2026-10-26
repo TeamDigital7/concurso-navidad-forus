@@ -31,7 +31,8 @@ def puntos_por_tramo(df: pd.DataFrame, hasta=None) -> pd.DataFrame:
     g["fin"] = g["tramo"].map(lambda i: TRAMOS[i].fin)
     g["cerrado"] = True if hasta is None else g["fin"] <= hasta
     g["cumplimiento"] = g["venta"] / g["presupuesto"].replace(0, np.nan)
-    g["sss"] = g["venta"] / g["venta_ly"] - 1
+    # Sin venta el año pasado no hay SSS (tienda nueva o cerrada): queda vacío y no da bonus
+    g["sss"] = g["venta"] / g["venta_ly"].replace(0, np.nan) - 1
     g["fidelizacion"] = g["tickets_fidelizados"] / g["tickets"]
     g["pts_venta"] = np.where(g["cumplimiento"] >= 1, g["tramo"].map(lambda i: TRAMOS[i].puntos), 0)
     g["pts_fidelizacion"] = np.where(g["fidelizacion"] > BONUS_FIDELIZACION["umbral"],
@@ -54,7 +55,7 @@ def ranking(pt: pd.DataFrame) -> pd.DataFrame:
         unidades=("unidades", "sum"), tramos_ganados=("pts_venta", lambda s: int((s > 0).sum())),
     )
     r["cumplimiento"] = r["venta"] / r["presupuesto"].replace(0, np.nan)
-    r["sss"] = r["venta"] / r["venta_ly"] - 1
+    r["sss"] = r["venta"] / r["venta_ly"].replace(0, np.nan) - 1
     r["fidelizacion"] = r["tickets_fidelizados"] / r["tickets"]
     r["ticket_prom"] = r["venta"] / r["tickets"]
     r["upt"] = r["unidades"] / r["tickets"]
@@ -66,7 +67,7 @@ def resumen_casas(rank: pd.DataFrame) -> pd.DataFrame:
         puntos=("puntos", "sum"), magos=("tienda", "count"),
         venta=("venta", "sum"), presupuesto=("presupuesto", "sum"), venta_ly=("venta_ly", "sum"))
     c["cumplimiento"] = c["venta"] / c["presupuesto"].replace(0, np.nan)
-    c["sss"] = c["venta"] / c["venta_ly"] - 1
+    c["sss"] = c["venta"] / c["venta_ly"].replace(0, np.nan) - 1
     c["puntos_prom"] = c["puntos"] / c["magos"]
     return c.sort_values("puntos", ascending=False).reset_index(drop=True)
 
