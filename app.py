@@ -80,7 +80,7 @@ def con_puesto(r: pd.DataFrame) -> pd.DataFrame:
 
 
 def _pct(x: float, signo: bool = False, dec: int = 0) -> str:
-    if pd.isna(x):
+    if pd.isna(x) or math.isinf(x):
         return "–"
     # Se trunca (no se redondea): un 99.6% de cumplimiento no puede verse como "100%"
     x = math.floor(x * 10 ** (dec + 2)) / 10 ** (dec + 2)
