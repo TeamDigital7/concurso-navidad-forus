@@ -12,7 +12,7 @@ from auth import auth_configurada, requerir_login, usuario
 from concurso import (CASAS, COMPETENCIAS, DESAFIOS_SSS, GANADOR_2025, GANADORES_POR_CASA, INICIO,
                       MAESTROS_CC, MAESTROS_TIENDA, NOTAS_TIENDA, PREMIO_CAMPEON, RANGO_PAGO, REGLAMENTO,
                       TRAMOS, BONUS_FIDELIZACION, BONUS_SSS)
-from data import ACTUALIZAR_CADA_MIN, cargar_datos, cargar_pronostico
+from data import ACTUALIZAR_CADA_MIN, SIM_DESFASE, cargar_datos, cargar_simulacion
 from puntos import factor_pago, ganadores, puntos_por_tramo, ranking, resumen_casas
 
 st.set_page_config(page_title="Forus y el Cáliz de los Campeones", page_icon="🏆", layout="wide",
@@ -50,17 +50,37 @@ if not requerir_login():
     st.stop()
 
 # ---------- Datos ----------
-df_all, fuente = cargar_datos()
-# Antes del 01/11 no hay venta del concurso: se muestra un pronóstico con la venta de los últimos días
-pronostico = None
+# Simulación: el torneo completo jugado con la venta real de septiembre y octubre (calzan día a
+# día con noviembre y diciembre). Antes del 01/11 es lo que se ve; después queda como opción en el
+# interruptor de arriba. El link ?simulacion=1 la abre directo.
+def _sincronizar_link():
+    if st.session_state["simulacion"]:
+        st.query_params["simulacion"] = "1"
+    else:
+        st.query_params.pop("simulacion", None)
+
+
+def interruptor_simulacion():
+    st.toggle("🔮 Simulación con la venta real de septiembre y octubre", key="simulacion",
+              on_change=_sincronizar_link,
+              help="Juega todo el torneo con la venta real de set–oct (el 01/09 cuenta como el 01/11).")
+
+
+if "simulacion" not in st.session_state:
+    st.session_state["simulacion"] = date.today() < INICIO or st.query_params.get("simulacion") == "1"
+simulacion = None
 desfase = timedelta(0)
+if st.session_state["simulacion"]:
+    df_all, fuente, s_desde, s_hasta, s_referencial = cargar_simulacion()
+    simulacion = {"desde": s_desde, "hasta": s_hasta, "referencial": s_referencial}
+    desfase = SIM_DESFASE
+else:
+    df_all, fuente = cargar_datos()
 if df_all.empty:
-    df_all, fuente, p_desde, p_hasta, p_referencial = cargar_pronostico()
-    if df_all.empty:
-        st.info(f"Fuente: {fuente}. Todavía no hay ventas del concurso (empieza el {INICIO:%d/%m/%Y}).")
-        st.stop()
-    pronostico = {"desde": p_desde, "hasta": p_hasta, "referencial": p_referencial}
-    desfase = COMPETENCIAS[0].inicio - p_desde
+    interruptor_simulacion()
+    st.info(f"Fuente: {fuente}. Todavía no hay ventas del concurso (empieza el {INICIO:%d/%m/%Y}). "
+            "Activa la simulación para ver el torneo con la venta real de septiembre y octubre.")
+    st.stop()
 if df_all["presupuesto"].sum() == 0:
     st.warning(df_all.attrs.get("presupuesto") or
                "No hay presupuesto cargado: falta configurar `presupuesto_table` en los secrets. "
@@ -70,8 +90,6 @@ pt_all = puntos_por_tramo(df_all, hasta=corte)
 rank_all = ranking(pt_all)
 casas = resumen_casas(rank_all)
 comp_actual = next((c for c in COMPETENCIAS if c.inicio <= corte <= c.fin), COMPETENCIAS[-1])
-# Fecha real de los datos (en el pronóstico, `corte` es la fecha simulada dentro del concurso)
-corte_real = pronostico["hasta"] if pronostico else corte
 
 # ---------- Utilidades ----------
 def con_puesto(r: pd.DataFrame) -> pd.DataFrame:
@@ -130,13 +148,11 @@ def barra_superior(casa: str | None):
     titulo = (f'<img src="{escudo(casa)}" alt="">Casa {casa}' if casa
               else (f'<img src="{img_uri("caliz.png")}" alt="">' if img_uri("caliz.png") else "🏆")
               + ' <span class="solo-pc-i">El </span>Cáliz de los Campeones')
-    if pronostico:
-        faltan = (INICIO - date.today()).days
-        etapa = f"🔮 Pronóstico · el torneo empieza el {INICIO:%d/%m}" + (f" (faltan {faltan} días)" if faltan > 0 else "")
-    else:
-        dia = (corte - comp_actual.inicio).days + 1
-        total = (comp_actual.fin - comp_actual.inicio).days + 1
-        etapa = f"⚡ {comp_actual.nombre} · día {min(dia, total)} de {total}"
+    dia = (corte - comp_actual.inicio).days + 1
+    total = (comp_actual.fin - comp_actual.inicio).days + 1
+    etapa = f"⚡ {comp_actual.nombre} · día {min(dia, total)} de {total}"
+    if simulacion:
+        etapa = f"🔮 Simulación · {etapa}"
     # Banda y cáliz: si están las imágenes nuevas en assets/ (banda.jpg, caliz.png) se usan esas
     banda = img_uri("banda.jpg") or img_uri("portada-banda.jpg")
     html(f"""<div class="topbar" style="--c:{color}; --portada:url('{banda}')">
@@ -145,14 +161,15 @@ def barra_superior(casa: str | None):
     </div><div class="etapa">{etapa}</div>""")
 
 
-def aviso_pronostico():
-    if not pronostico:
+def aviso_simulacion():
+    if not simulacion:
         return
-    comp = COMPETENCIAS[0]
-    meta = (f" Sin presupuesto cargado, la meta es la venta del año pasado "
-            f"+{DESAFIOS_SSS.get(comp.inicio.month, 0):.0%}.") if pronostico["referencial"] else ""
-    texto = (f"🔮 <b>La profecía:</b> así quedaría <b>{comp.nombre}</b> con la venta real del {pronostico['desde']:%d/%m} "
-             f"al {pronostico['hasta']:%d/%m}. Los puntos todavía no cuentan.{meta}")
+    hasta_sim = simulacion["hasta"] + desfase
+    meta = (" Sin presupuesto cargado para esas fechas, la meta es la venta del año pasado + el desafío "
+            "SSS del mes.") if simulacion["referencial"] else ""
+    texto = (f"🔮 <b>La profecía:</b> el torneo jugado con la venta real del {simulacion['desde']:%d/%m} al "
+             f"{simulacion['hasta']:%d/%m} (el {simulacion['desde']:%d/%m} cuenta como el {INICIO:%d/%m}; "
+             f"llega hasta el {hasta_sim:%d/%m} del torneo). Los puntos no cuentan.{meta}")
     html(f'<div class="pronostico">{texto}</div>')
 
 
@@ -240,14 +257,8 @@ def cabecera_casa(casa: str, r: pd.DataFrame):
 
 
 def pie():
-    partes = [f"Fuente: {fuente} · datos al {corte_real:%d/%m/%Y}",
-              f"se actualiza sola cada {ACTUALIZAR_CADA_MIN} min"]
-    if "fidelizacion" in df_all.attrs:
-        aviso_fid, regla_bi = df_all.attrs["fidelizacion"]
-        partes.append(("💳 " if regla_bi else "⚠️ ") + aviso_fid +
-                      ("" if regla_bi else " Mientras tanto la fidelización se calcula por RUC/DNI."))
-    html('<div class="pie">' + " · ".join(partes[:2]) + "<br>" + "<br>".join(partes[2:])
-         + '<div class="travesura">✨ Travesura realizada ✨</div></div>')
+    # Solo el cierre: la fuente y los avisos técnicos (fidelización) no se muestran al equipo
+    html('<div class="pie"><div class="travesura">✨ Travesura realizada ✨</div></div>')
 
 
 # ---------- Vistas ----------
@@ -255,7 +266,7 @@ def vista_posiciones():
     periodos = ["Torneo", comp_actual.nombre]
     c_main, c_side = st.columns([2.3, 1], gap="large")
     with c_main:
-        aviso_pronostico()
+        aviso_simulacion()
         # Celular: Canal Retail arriba, luego la tabla y las casas al final (en PC van a la derecha)
         panel_retail("solo-movil")
         periodo = selector("Periodo", periodos, "periodo")
@@ -297,10 +308,9 @@ def vista_competencias():
                        label_visibility="collapsed")
     comp = COMPETENCIAS[nombres.index(sel)]
     top, cumpl, f = ganadores(pt_all, comp)
-    if pronostico:
-        estado = "Pronóstico" if comp == COMPETENCIAS[0] else "Por iniciar"
-    else:
-        estado = "Cerrada" if corte >= comp.fin else ("En curso" if corte >= comp.inicio else "Por iniciar")
+    estado = "Cerrada" if corte >= comp.fin else ("En curso" if corte >= comp.inicio else "Por iniciar")
+    if simulacion:
+        estado += " (simulación)"
     html(f"""<div class="card comp"><div><span><b>{comp.nombre}</b> <span class="chip">{estado}</span></span>
       <small>{comp.inicio:%d/%m} al {comp.fin:%d/%m} · pago {comp.pago:%d/%m}</small></div>
       <div class="comp-pago"><b>{f:.0%}</b><small>se paga · Retail {cumpl:.1%}</small></div></div>""")
@@ -316,7 +326,7 @@ def vista_competencias():
 
 
 def vista_calendario():
-    hoy = corte_real if pronostico else corte  # el pronóstico no cierra tramos
+    hoy = corte
     filas = ""
     for i, t in enumerate(TRAMOS):
         if t.fin <= hoy:
@@ -367,11 +377,12 @@ st.session_state["ultima_carga"] = time.time()
 auto_actualizar()
 barra_superior(st.session_state.get("casa") if st.session_state.get("casa") in CASAS
                and st.session_state.get("nav", "Posiciones") == "Posiciones" else None)
+interruptor_simulacion()
 vista = selector("Sección", ["Posiciones", "Competencias", "Calendario", "Reglas"], "nav")
 if vista == "Posiciones":
     vista_posiciones()
 elif vista == "Competencias":
-    aviso_pronostico()
+    aviso_simulacion()
     vista_competencias()
 elif vista == "Calendario":
     vista_calendario()

@@ -89,11 +89,11 @@ La app se refresca sola cada 10 minutos (`data.ACTUALIZAR_CADA_MIN`) y muestra a
 la última consulta a BigQuery. Sirve para dejarla abierta en una pantalla. Los datos son tan
 frescos como la carga de `ft_pe_venta_retail`.
 
-## Pronóstico antes del 01/11
+## Simulación con la venta real de septiembre y octubre
 
-Mientras no hay venta del concurso, la app muestra un **pronóstico**: toma los últimos 15 días con
-venta (lo que dura La Copa de Quidditch), los juega como si fueran esa competencia con las mismas
-reglas de puntos y los muestra en Ranking, Gran Salón, Casas, Competencias y Copa con un aviso
-🔮. Si todavía no hay presupuesto cargado, la meta es referencial: venta del año pasado + el
-desafío SSS de noviembre (+24%). Desde el 01/11 la app pasa sola a la venta real del concurso
-(`data.cargar_pronostico`).
+El interruptor **🔮 Simulación** (arriba, o el link `?simulacion=1`) juega todo el torneo con la
+venta real de septiembre y octubre: los dos tramos tienen 61 días y calzan día a día con
+noviembre y diciembre (01/09 → 01/11, 31/10 → 31/12), así que se ven las 4 competencias, sus
+ganadores, el calendario y la Copa con las reglas reales. Antes del 01/11 viene encendido; después
+queda como opción. Si no hay presupuesto para set–oct, la meta es la venta del año pasado + el
+desafío SSS del mes simulado (`data.cargar_simulacion`).

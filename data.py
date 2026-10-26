@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-from concurso import COMPETENCIAS, DESAFIOS_SSS, FIN, INICIO, TIENDA_A_CASA
+from concurso import DESAFIOS_SSS, FIN, INICIO, TIENDA_A_CASA
 
 COLUMNAS = ["fecha", "tienda", "venta", "presupuesto", "venta_ly", "tickets",
             "tickets_fidelizados", "unidades"]
@@ -390,29 +390,31 @@ def cargar_datos() -> tuple[pd.DataFrame, str]:
     return _normalizar(df), fuente
 
 
-@st.cache_data(ttl=ACTUALIZAR_CADA_MIN * 60 - 30, show_spinner="Armando el pronóstico…")
-def cargar_pronostico() -> tuple[pd.DataFrame, str, date, date, bool]:
-    """Antes del concurso: la venta real de los últimos días jugada como si fuera la 1ª competencia.
+# Simulación: la venta real de septiembre y octubre jugada como si fuera noviembre y diciembre.
+# Los dos tramos tienen 61 días, así que calzan día a día (01/09 → 01/11, 31/10 → 31/12).
+SIM_INICIO = date(2026, 9, 1)
+SIM_DESFASE = INICIO - SIM_INICIO
 
-    Se toman los últimos N días con venta (N = días de la 1ª competencia) y se corren las fechas
-    para que caigan en sus tramos, así puntos.py aplica las reglas tal cual. Devuelve también las
-    fechas reales de la ventana y si el presupuesto es referencial (venta LY + desafío SSS del mes).
+
+@st.cache_data(ttl=ACTUALIZAR_CADA_MIN * 60 - 30, show_spinner="Armando la simulación…")
+def cargar_simulacion() -> tuple[pd.DataFrame, str, date, date, bool]:
+    """El torneo completo con la venta real de set–oct, con las fechas corridas a nov–dic.
+
+    Así puntos.py aplica las reglas tal cual (tramos, competencias, bonus). Devuelve también las
+    fechas reales usadas y si el presupuesto es referencial (sin presupuesto cargado para esas
+    fechas: venta LY + desafío SSS del mes simulado).
     """
-    comp = COMPETENCIAS[0]
-    n = (comp.fin - comp.inicio).days + 1
     fin = min(date.today(), INICIO) - timedelta(days=1)
-    inicio = fin - timedelta(days=n + 6)  # margen por si la tabla viene con días de atraso
     cfg = config_bigquery()
-    df, fuente = ((_leer_bigquery(cfg, inicio, fin), "BigQuery") if cfg
-                  else (_ejemplo(inicio=inicio, fin=fin), "Datos de ejemplo"))
+    df, fuente = ((_leer_bigquery(cfg, SIM_INICIO, fin), "BigQuery") if cfg
+                  else (_ejemplo(inicio=SIM_INICIO, fin=fin), "Datos de ejemplo"))
     df = _normalizar(df)
     if df.empty:
-        return df, fuente, inicio, fin, False
-    hasta = df["fecha"].max()
-    desde = hasta - pd.Timedelta(days=n - 1)
-    df = df[df["fecha"] >= desde].copy()  # .copy() conserva attrs["consultado"]
-    df["fecha"] += pd.Timestamp(comp.inicio) - desde
+        return df, fuente, SIM_INICIO, fin, False
+    hasta = df["fecha"].max().date()
+    df = df.copy()  # .copy() conserva attrs (hora de consulta, avisos)
+    df["fecha"] += pd.Timedelta(SIM_DESFASE)
     referencial = df["presupuesto"].sum() == 0
     if referencial:
-        df["presupuesto"] = df["venta_ly"] * (1 + DESAFIOS_SSS.get(comp.inicio.month, 0))
-    return df.reset_index(drop=True), fuente, desde.date(), hasta.date(), referencial
+        df["presupuesto"] = df["venta_ly"] * (1 + df["fecha"].dt.month.map(DESAFIOS_SSS).fillna(0))
+    return df.reset_index(drop=True), fuente, SIM_INICIO, hasta, referencial
