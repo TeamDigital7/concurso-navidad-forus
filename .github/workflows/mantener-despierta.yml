@@ -1,0 +1,35 @@
+# Mantiene despierta la app de Streamlit Cloud durante el concurso: cada 3 horas la abre con un
+# navegador real (despertar.py) y, si estaba dormida, aprieta "get this app back up".
+name: Mantener despierta la app
+
+on:
+  schedule:
+    - cron: "17 */3 * * *"   # cada 3 horas (hora UTC); minuto 17 para no caer en la hora punta de GitHub
+  workflow_dispatch:          # también se puede correr a mano desde la pestaña Actions
+
+permissions:
+  actions: write   # para renovar esta tarea (ver último paso)
+  contents: read
+
+jobs:
+  despertar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Instalar navegador
+        run: |
+          pip install playwright==1.48.0
+          python -m playwright install --with-deps chromium
+      - name: Abrir la app (y despertarla si duerme)
+        run: python .github/scripts/despertar.py "https://concurso-navidad-forus.streamlit.app/"
+      # En repos públicos GitHub apaga las tareas programadas tras 60 días sin actividad; volver a
+      # habilitarla en cada corrida reinicia ese plazo y la mantiene viva hasta fin de año.
+      - name: Renovar la tarea programada
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/mantener-despierta.yml/enable"
