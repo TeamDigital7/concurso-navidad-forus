@@ -9,7 +9,7 @@ import pandas as pd
 import streamlit as st
 
 from auth import auth_configurada, requerir_login, usuario
-from concurso import (CASAS, COMPETENCIAS, DESAFIOS_SSS, GANADOR_2025, GANADORES_POR_CASA, INICIO,
+from concurso import (CASAS, COMPETENCIAS, DESAFIOS_SSS, FACTOR_PART_TIME, GANADOR_2025, GANADORES_POR_CASA, INICIO,
                       MAESTROS_CC, MAESTROS_TIENDA, NOTAS_TIENDA, PREMIO_CAMPEON, RANGO_PAGO, REGLAMENTO,
                       TRAMOS, BONUS_FIDELIZACION, BONUS_SSS)
 from data import ACTUALIZAR_CADA_MIN, SIM_DESFASE, cargar_datos, cargar_simulacion
@@ -25,7 +25,8 @@ st.markdown(f"<style>{(ASSETS / 'style.css').read_text(encoding='utf-8')}</style
 
 def html(s: str):
     # Se quitan los saltos/sangrías para que Markdown no lo trate como bloque de código
-    st.markdown("".join(line.strip() for line in s.splitlines()), unsafe_allow_html=True)
+    # Unidas con espacio: un texto partido en dos líneas no debe quedar pegado ("tramocada")
+    st.markdown(" ".join(line.strip() for line in s.splitlines()), unsafe_allow_html=True)
 
 
 @cache
@@ -174,19 +175,18 @@ def aviso_simulacion():
     html(f'<div class="pronostico">{texto}</div>')
 
 
-def tabla_posiciones(r: pd.DataFrame, corte_premio: int | None = None, marcar: str | None = None,
+def tabla_posiciones(r: pd.DataFrame, corte_premio: int | None = None,
                      compacta: bool = False, titulo: str = "") -> str:
     """Tabla de posiciones estilo X: # · escudo + tienda · columnas cortas.
 
     En el celular solo quedan PTS y % PPTO; el resto se ve en PC. `corte_premio` dibuja la línea
-    verde bajo ese puesto (los que ganan premio). `marcar` = columna booleana que pinta 🎁.
+    verde bajo ese puesto (los que ganan premio).
     Devuelve el HTML (para poder armar grillas de varias tablas en un solo bloque).
     """
     filas = ""
     for _, x in r.iterrows():
         pos = int(x["puesto"])
         cls = "corte" if corte_premio and pos == corte_premio else ""
-        gana = '<span class="gana" title="Hoy gana premio">🎁</span>' if marcar and x.get(marcar) else ""
         nota = f'<sup title="{NOTAS_TIENDA[x["tienda"]]}">*</sup>' if x["tienda"] in NOTAS_TIENDA else ""
         cumple = "pos" if x["cumplimiento"] >= 1 else "neg"
         crece = "pos" if x["sss"] >= 0 else "neg"
@@ -196,7 +196,7 @@ def tabla_posiciones(r: pd.DataFrame, corte_premio: int | None = None, marcar: s
           <td class="n pc">{x['venta']:,.0f}</td>"""
         sello = f'<span class="sello s{pos}">{pos}</span>' if pos <= 3 else pos
         filas += f"""<tr class="{cls}"><td class="num">{sello}</td>
-          <td><div class="tm"><img src="{escudo(x['casa'])}" alt="{x['casa']}"><b>{x['tienda']}{nota}</b>{gana}</div></td>
+          <td><div class="tm"><img src="{escudo(x['casa'])}" alt="{x['casa']}"><b>{x['tienda']}{nota}</b></div></td>
           <td class="n pts">{int(x['puntos'])}</td><td class="n {cumple}">{_pct(x['cumplimiento'])}</td>
           {extra}</tr>"""
     th_extra = "" if compacta else ('<th class="n pc">VENTA</th><th class="n pc">BONUS</th><th class="n pc">SSS</th>'
@@ -302,7 +302,6 @@ def vista_posiciones():
             cabecera_casa(casa, r)
         texto = st.text_input("Buscar tienda", key="buscar", label_visibility="collapsed",
                               placeholder="🔎 Buscar mago (tienda)")
-        r["gana"] = (r.groupby("casa").cumcount() + 1 <= GANADORES_POR_CASA) if zona else False
         if texto.strip():
             palabras = texto.upper().split()
             r = r[r["tienda"].apply(lambda t: all(p in t for p in palabras))]
@@ -311,10 +310,9 @@ def vista_posiciones():
         elif r.empty:
             st.caption("Ninguna tienda coincide con la búsqueda.")
         else:
-            html(tabla_posiciones(r, corte_premio=GANADORES_POR_CASA if zona and casa and not texto.strip() else None,
-                                  marcar="gana" if zona and not casa else None))
+            html(tabla_posiciones(r, corte_premio=GANADORES_POR_CASA if zona and casa and not texto.strip() else None))
         nota = (f"{periodo}: ganan premio los 5 primeros de cada casa (línea verde)." if zona and casa else
-                f"{periodo} · 🎁 = está en el top 5 de su casa." if zona else
+                f"{periodo}: ganan los 5 primeros de cada casa (elige una casa para ver el corte)." if zona else
                 "Copa del Mejor Mago: puntos sumando todas las competencias.")
         html(f'<div class="nota">{nota} PTS = puntos · % PPTO = venta vs. presupuesto.</div>')
         if not casa:
@@ -367,7 +365,56 @@ def vista_calendario():
       {BONUS_SSS['umbral']:.0%} +{BONUS_SSS['puntos']}. El 25/12 no tiene tramo.</div>""")
 
 
+def como_se_ganan_puntos():
+    """Explicación de los puntos armada con las mismas constantes que usa el cálculo (concurso.py)."""
+    pts_tramos = sum(t.puntos for t in TRAMOS)
+    bonus_tramo = BONUS_FIDELIZACION["puntos"] + BONUS_SSS["puntos"]
+    valores = " · ".join(str(t.puntos) for t in TRAMOS)
+    filas_comp = ""
+    for c in COMPETENCIAS:
+        ts = [t for t in TRAMOS if c.inicio <= t.inicio <= c.fin]
+        venta = sum(t.puntos for t in ts)
+        filas_comp += f"""<tr><td><b>{c.nombre}</b><br><small>{c.inicio:%d/%m} – {c.fin:%d/%m}</small></td>
+          <td class="n">{len(ts)}</td><td>{" · ".join(str(t.puntos) for t in ts)}</td>
+          <td class="n pts">{venta + bonus_tramo * len(ts)}</td></tr>"""
+    pago = "".join(f'<tr><td>Desde {d:.1%}</td><td class="n pts">{f:.0%}</td></tr>' for d, f in RANGO_PAGO)
+    ej = TRAMOS[3]
+    html(f"""<div class="card"><div class="card-h">¿Cómo se ganan los puntos?</div>
+      <p class="reglas-p">El torneo (01/11 al 31/12) se divide en <b>{len(TRAMOS)} tramos</b> de 2 a 5 días. En cada tramo
+      cada mago se mide con la <b>suma de esos días</b> y los puntos se ganan <b>cuando el tramo cierra</b>
+      (mientras está en curso, suma 0). Cada condición es de todo o nada.</p>
+      <div class="std-wrap interior"><table class="std"><thead><tr><th>EN CADA TRAMO</th><th>CONDICIÓN</th>
+        <th class="n">PUNTOS</th></tr></thead><tbody>
+        <tr><td><b>Puntos por venta</b></td><td>Venta ≥ presupuesto (cumplimiento ≥ 100%)</td>
+          <td class="n pts">{min(t.puntos for t in TRAMOS)} a {max(t.puntos for t in TRAMOS)}</td></tr>
+        <tr><td><b>Bonus fidelización</b></td><td>Más del {BONUS_FIDELIZACION['umbral']:.0%} de tickets con cliente válido</td>
+          <td class="n pts">+{BONUS_FIDELIZACION['puntos']}</td></tr>
+        <tr><td><b>Bonus SSS</b></td><td>Crecer más de {BONUS_SSS['umbral']:.0%} vs. el año pasado (mismo día de la semana,
+          solo días con venta en los dos años)</td><td class="n pts">+{BONUS_SSS['puntos']}</td></tr>
+      </tbody></table></div>
+      <p class="reglas-p">Los tramos valen más hacia el final: <b>{valores}</b>. El 25/12 no tiene tramo.</p>
+      <p class="reglas-p"><b>Ejemplo:</b> en el tramo del {ej.inicio:%d/%m} al {ej.fin:%d/%m} (vale {ej.puntos}), un mago con
+      105% de cumplimiento, 72% de fidelización y SSS de +8% gana {ej.puntos} + {BONUS_FIDELIZACION['puntos']} + 0 =
+      <b>{ej.puntos + BONUS_FIDELIZACION['puntos']} puntos</b>.</p></div>""")
+    html(f"""<div class="std-wrap"><table class="std"><thead><tr><th>COMPETENCIA</th><th class="n">TRAMOS</th>
+      <th>PUNTOS POR TRAMO</th><th class="n">MÁXIMO</th></tr></thead><tbody>{filas_comp}</tbody></table></div>""")
+    html(f"""<div class="card"><div class="card-h">¿Quién gana?</div><ul class="reglas">
+      <li><b>Cada competencia:</b> sus puntos son la suma de sus tramos. Ganan los <b>{GANADORES_POR_CASA} magos con más
+        puntos de cada casa</b>. Empate: gana el de mejor % de cumplimiento.</li>
+      <li><b>Copa del Mejor Mago:</b> el acumulado de todas las competencias (máximo
+        {pts_tramos + bonus_tramo * len(TRAMOS)} puntos). Es la vista «Torneo completo · acumulado».</li>
+      <li><b>Copa de las Casas:</b> la suma de los puntos de todos los magos de la casa (los relojes de arena). Como las
+        casas tienen distinta cantidad de tiendas, también se muestra el promedio por mago.</li>
+      <li>Los part time reciben el {FACTOR_PART_TIME:.0%} del premio.</li></ul>
+      <div class="card-h">¿Cuánto del premio se paga?</div>
+      <p class="reglas-p">Depende del cumplimiento de <b>todo el canal Retail</b> en la competencia (el «Se paga» de la app).
+      Por debajo de {RANGO_PAGO[0][0]:.0%} no hay premio.</p>
+      <div class="std-wrap interior"><table class="std"><thead><tr><th>CUMPLIMIENTO DEL CANAL</th>
+        <th class="n">SE PAGA</th></tr></thead><tbody>{pago}</tbody></table></div></div>""")
+
+
 def vista_reglas():
+    como_se_ganan_puntos()
     rango = "".join(f"<li>Retail desde {d:.1%}: se paga el <b>{fct:.0%}</b> del premio</li>" for d, fct in RANGO_PAGO)
     desafios = "".join(f"<li>{'Noviembre' if m == 11 else 'Diciembre'}: SSS del canal +{v:.0%}</li>"
                        for m, v in DESAFIOS_SSS.items())
