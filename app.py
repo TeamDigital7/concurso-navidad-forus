@@ -362,6 +362,11 @@ consultado = df_all.attrs.get("consultado")
 html(f'<div class="en-vivo"><span class="live">En vivo</span>'
      f'{f" · venta consultada a las {consultado:%H:%M}" if consultado else ""}'
      f' · se actualiza sola cada {ACTUALIZAR_CADA_MIN} min</div>')
+if "fidelizacion" in df_all.attrs:
+    aviso_fid, regla_bi = df_all.attrs["fidelizacion"]
+    if not regla_bi:
+        aviso_fid += " Mientras tanto la fidelización se calcula por RUC/DNI del cliente."
+    html(f'<div class="en-vivo">{"💳" if regla_bi else "⚠️"} {aviso_fid}</div>')
 
 # ---------- Páginas ----------
 if pagina.endswith(("Ranking", "Gran Salón", "Casas", "Competencias", "Copa del Mejor Mago")):
