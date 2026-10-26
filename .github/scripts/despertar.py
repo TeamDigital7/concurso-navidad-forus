@@ -3,6 +3,7 @@
 Streamlit Community Cloud duerme las apps sin visitas por varias horas. Una petición HTTP simple no
 cuenta como visita: hace falta un navegador que abra la sesión. Uso: python despertar.py <url>
 """
+import os
 import sys
 
 from playwright.sync_api import TimeoutError as PWTimeout, sync_playwright
@@ -33,7 +34,9 @@ def esperar_app(page, segundos: int) -> bool:
 
 def main() -> int:
     with sync_playwright() as p:
-        page = p.chromium.launch().new_page()
+        # En GitHub se usa el Google Chrome que ya trae la máquina (NAVEGADOR=chrome): no hay que
+        # instalar ningún navegador, que es lo lento y lo que se puede trabar.
+        page = p.chromium.launch(channel=os.environ.get("NAVEGADOR") or None).new_page()
         page.goto(URL, wait_until="domcontentloaded", timeout=120_000)
         page.wait_for_timeout(10_000)
         boton = page.get_by_role("button", name="get this app back up")
