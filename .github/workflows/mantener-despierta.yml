@@ -20,11 +20,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Instalar navegador
-        run: |
-          pip install playwright==1.48.0
-          python -m playwright install --with-deps chromium
+      # Solo la librería: el navegador es el Google Chrome que ya viene instalado en ubuntu-latest
+      - name: Instalar Playwright
+        timeout-minutes: 3
+        run: pip install playwright==1.48.0
       - name: Abrir la app (y despertarla si duerme)
+        timeout-minutes: 8
+        env:
+          NAVEGADOR: chrome
         run: python .github/scripts/despertar.py "https://concurso-navidad-forus.streamlit.app/"
       # En repos públicos GitHub apaga las tareas programadas tras 60 días sin actividad; volver a
       # habilitarla en cada corrida reinicia ese plazo y la mantiene viva hasta fin de año.
