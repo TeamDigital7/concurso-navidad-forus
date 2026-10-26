@@ -139,7 +139,7 @@ def aviso_pronostico():
 
 
 def tabla_posiciones(r: pd.DataFrame, corte_premio: int | None = None, marcar: str | None = None,
-                     premio: bool = False, compacta: bool = False, titulo: str = "") -> str:
+                     compacta: bool = False, titulo: str = "") -> str:
     """Tabla de posiciones estilo X: # · escudo + tienda · columnas cortas.
 
     En el celular solo quedan PTS y % PPTO; el resto se ve en PC. `corte_premio` dibuja la línea
@@ -158,17 +158,15 @@ def tabla_posiciones(r: pd.DataFrame, corte_premio: int | None = None, marcar: s
           <td class="n pc">{int(x['pts_venta'])}</td><td class="n pc">{int(x['pts_bonus'])}</td>
           <td class="n pc {crece}">{_pct(x['sss'], True)}</td><td class="n pc">{_pct(x['fidelizacion'])}</td>
           <td class="n pc">{x['venta']:,.0f}</td>"""
-        col_premio = f'<td class="n oro">{soles(x["premio"])}</td>' if premio else ""
         sello = f'<span class="sello s{pos}">{pos}</span>' if pos <= 3 else pos
         filas += f"""<tr class="{cls}"><td class="num">{sello}</td>
           <td><div class="tm"><img src="{escudo(x['casa'])}" alt="{x['casa']}"><b>{x['tienda']}{nota}</b>{gana}</div></td>
           <td class="n pts">{int(x['puntos'])}</td><td class="n {cumple}">{_pct(x['cumplimiento'])}</td>
-          {extra}{col_premio}</tr>"""
+          {extra}</tr>"""
     th_extra = "" if compacta else ('<th class="n pc">VENTA</th><th class="n pc">BONUS</th><th class="n pc">SSS</th>'
                                     '<th class="n pc">FID</th><th class="n pc">VENTA S/</th>')
-    th_premio = '<th class="n">PREMIO</th>' if premio else ""
     return f"""<div class="std-wrap">{titulo}<table class="std"><thead><tr><th class="num">#</th><th>MAGO</th>
-      <th class="n">PTS</th><th class="n">% PPTO</th>{th_extra}{th_premio}</tr></thead>
+      <th class="n">PTS</th><th class="n">% PPTO</th>{th_extra}</tr></thead>
       <tbody>{filas}</tbody></table></div>"""
 
 
@@ -287,15 +285,14 @@ def vista_competencias():
         estado = "Pronóstico" if comp == COMPETENCIAS[0] else "Por iniciar"
     else:
         estado = "Cerrada" if corte >= comp.fin else ("En curso" if corte >= comp.inicio else "Por iniciar")
-    premios = " · ".join(f"{i}° {soles(p)}" for i, p in enumerate(comp.premios, 1))
     html(f"""<div class="card comp"><div><span><b>{comp.nombre}</b> <span class="chip">{estado}</span></span>
-      <small>{comp.inicio:%d/%m} al {comp.fin:%d/%m} · pago {comp.pago:%d/%m} · {premios}</small></div>
+      <small>{comp.inicio:%d/%m} al {comp.fin:%d/%m} · pago {comp.pago:%d/%m}</small></div>
       <div class="comp-pago"><b>{f:.0%}</b><small>se paga · Retail {cumpl:.1%}</small></div></div>""")
     if top.empty:
         st.info("Esta competencia todavía no tiene ventas.")
         return
     tablas = "".join(
-        tabla_posiciones(top[top["casa"] == casa], premio=True, compacta=True,
+        tabla_posiciones(top[top["casa"] == casa], compacta=True,
                          titulo=f'<div class="grupo" style="--c:{_color(casa)}"><img src="{escudo(casa)}" alt="">Casa {casa}</div>')
         for casa in casas["casa"] if casa in set(top["casa"]))
     html(f'<div class="grilla">{tablas}</div>')
