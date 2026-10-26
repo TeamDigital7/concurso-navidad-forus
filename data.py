@@ -110,13 +110,16 @@ def _columnas(client, bigquery, tabla: str) -> dict[str, str]:
 
 
 def _mapear(cfg: dict, prefijo: str, alias_por_campo: dict, columnas: dict[str, str]) -> dict[str, str]:
-    """Campo → columna: la fijada en los secrets (<prefijo>_<campo>) o el primer alias que exista."""
+    """Campo → columna: la fijada en los secrets (<prefijo>_<campo>) o el primer alias que exista.
+
+    Una columna fijada en los secrets que no existe en la tabla se ignora (antes rompía la consulta).
+    """
     por_minuscula = {c.lower(): c for c in columnas}
     mapa = {}
     for campo, alias in alias_por_campo.items():
-        fijo = cfg.get(f"{prefijo}_{campo}")
-        if fijo:
-            mapa[campo] = fijo
+        fijo = str(cfg.get(f"{prefijo}_{campo}") or "").strip().strip("`").lower()
+        if fijo in por_minuscula:
+            mapa[campo] = por_minuscula[fijo]
             continue
         encontrada = next((por_minuscula[a] for a in alias if a in por_minuscula), None)
         if encontrada:
@@ -228,15 +231,26 @@ def config_bigquery() -> dict | None:
 
 # Nombres posibles de las columnas de la tabla de presupuesto (se fijan con presupuesto_col_<campo>)
 ALIAS_PPTO = {
-    "fecha": ["fecha", "fecha_presupuesto", "fecha_ppto", "fecha_dia", "dia", "fecha_venta", "fec",
-              "periodo", "date"],
+    "fecha": ["fecha", "fecha_presupuesto", "fecha_ppto", "fecha_dia", "fecha_venta", "fec", "date"],
     "tienda": ["tienda", "nombre_tienda", "nombre_local", "tienda_nombre", "local_nombre", "desc_local",
-               "codigo_local", "cod_local", "codigo_tienda", "cod_tienda", "nlocal_lv", "nlocal", "local",
-               "id_local", "id_tienda", "sucursal", "store"],
+               "codigo_local", "cod_local", "codigo_tienda", "cod_tienda", "nlocal_pd", "nlocal_lv",
+               "nlocal", "local", "id_local", "id_tienda", "sucursal", "store"],
     "valor": ["presupuesto", "ppto", "presupuesto_venta", "ppto_venta", "venta_presupuesto",
-              "monto_presupuesto", "presupuesto_sin_igv", "ppto_sin_igv", "meta", "meta_venta",
+              "monto_presupuesto", "presupuesto_sin_igv", "ppto_sin_igv", "monto_pd", "meta", "meta_venta",
               "monto", "valor", "importe", "budget"],
+    # Sin columna de fecha, la fecha se arma con periodo (yyyymm) + día del mes, como en la tabla
+    # de presupuesto de Perú central (periodo_pd = 202611, dia_pd = 15).
+    "periodo": ["periodo_pd", "periodo", "anio_mes", "aniomes", "yyyymm", "mes_pd"],
+    "dia": ["dia_pd", "dia", "dia_mes", "day"],
 }
+OBLIGATORIAS_PPTO = ("tienda", "valor")
+
+
+def _sql_periodo_dia(periodo: str, dia: str) -> str:
+    """Fecha a partir de periodo (yyyymm, o yyyymmdd) y día del mes. Un día inválido queda NULL."""
+    p = f"SAFE_CAST({periodo} AS INT64)"
+    return (f"(CASE WHEN {p} >= 10000000 THEN SAFE.PARSE_DATE('%Y%m%d', CAST({p} AS STRING)) "
+            f"ELSE SAFE.DATE(DIV({p}, 100), MOD({p}, 100), SAFE_CAST({dia} AS INT64)) END)")
 
 
 def _leer_presupuesto(client, cfg: dict, bigquery, inicio: date, fin: date,
@@ -257,12 +271,16 @@ def _leer_presupuesto(client, cfg: dict, bigquery, inicio: date, fin: date,
     if not columnas:
         return None, f"No se encontró la tabla de presupuesto `{tabla}`."
     mapa = _mapear(cfg, "presupuesto_col", ALIAS_PPTO, columnas)
-    faltan = [c for c in ALIAS_PPTO if c not in mapa]
+    faltan = [c for c in OBLIGATORIAS_PPTO if c not in mapa]
+    if "fecha" not in mapa and not {"periodo", "dia"} <= set(mapa):
+        faltan.insert(0, "fecha (o periodo + día)")
     if faltan:
         return None, (f"En `{tabla}` no se encontraron las columnas de {', '.join(faltan)}. "
                       f"Columnas de la tabla: {', '.join(columnas)}. Fíjalas en los secrets con "
-                      f"presupuesto_col_fecha, presupuesto_col_tienda y presupuesto_col_valor.")
-    fecha = _sql_fecha(f"`{mapa['fecha']}`", columnas.get(mapa["fecha"], "DATE"))
+                      f"presupuesto_col_fecha (o presupuesto_col_periodo y presupuesto_col_dia), "
+                      f"presupuesto_col_tienda y presupuesto_col_valor.")
+    fecha = (_sql_fecha(f"`{mapa['fecha']}`", columnas.get(mapa["fecha"], "DATE")) if "fecha" in mapa
+             else _sql_periodo_dia(f"`{mapa['periodo']}`", f"`{mapa['dia']}`"))
     sql = f"""
         SELECT {fecha} AS fecha, UPPER(TRIM(CAST(`{mapa['tienda']}` AS STRING))) AS clave,
                SUM(SAFE_CAST(`{mapa['valor']}` AS FLOAT64)) AS presupuesto
