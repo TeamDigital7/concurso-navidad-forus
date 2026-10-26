@@ -90,8 +90,6 @@ pt_all = puntos_por_tramo(df_all, hasta=corte)
 rank_all = ranking(pt_all)
 casas = resumen_casas(rank_all)
 comp_actual = next((c for c in COMPETENCIAS if c.inicio <= corte <= c.fin), COMPETENCIAS[-1])
-# Fecha real de los datos (en la simulación, `corte` es la fecha simulada dentro del concurso)
-corte_real = simulacion["hasta"] if simulacion else corte
 
 # ---------- Utilidades ----------
 def con_puesto(r: pd.DataFrame) -> pd.DataFrame:
@@ -259,14 +257,8 @@ def cabecera_casa(casa: str, r: pd.DataFrame):
 
 
 def pie():
-    partes = [f"Fuente: {fuente} · datos al {corte_real:%d/%m/%Y}",
-              f"se actualiza sola cada {ACTUALIZAR_CADA_MIN} min"]
-    if "fidelizacion" in df_all.attrs:
-        aviso_fid, regla_bi = df_all.attrs["fidelizacion"]
-        partes.append(("💳 " if regla_bi else "⚠️ ") + aviso_fid +
-                      ("" if regla_bi else " Mientras tanto la fidelización se calcula por RUC/DNI."))
-    html('<div class="pie">' + " · ".join(partes[:2]) + "<br>" + "<br>".join(partes[2:])
-         + '<div class="travesura">✨ Travesura realizada ✨</div></div>')
+    # Solo el cierre: la fuente y los avisos técnicos (fidelización) no se muestran al equipo
+    html('<div class="pie"><div class="travesura">✨ Travesura realizada ✨</div></div>')
 
 
 # ---------- Vistas ----------
