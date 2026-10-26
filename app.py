@@ -1,7 +1,8 @@
 import base64
 import math
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 from functools import cache
 from pathlib import Path
 
@@ -88,7 +89,12 @@ if df_all["presupuesto"].sum() == 0:
                "No hay presupuesto cargado: falta configurar `presupuesto_table` en los secrets. "
                "Sin presupuesto no se puede calcular el cumplimiento ni los puntos por venta.")
 corte = df_all["fecha"].max().date()
-pt_all = puntos_por_tramo(df_all, hasta=corte)
+# Último día ya terminado: un tramo suma puntos recién cuando su último día cerró. Si BigQuery trae
+# venta del día en curso, ese día no cierra tramos (quedaría con la venta a medias). En la
+# simulación todos los días ya pasaron.
+ayer = (datetime.now(ZoneInfo("America/Lima")) - timedelta(days=1)).date()
+cierre = corte if simulacion else min(corte, ayer)
+pt_all = puntos_por_tramo(df_all, hasta=cierre)
 rank_all = ranking(pt_all)
 casas = resumen_casas(rank_all)
 comp_actual = next((c for c in COMPETENCIAS if c.inicio <= corte <= c.fin), COMPETENCIAS[-1])
@@ -267,7 +273,7 @@ ACUMULADO = "Torneo completo · acumulado"
 
 
 def _estado_comp(c) -> str:
-    return "cerrada" if corte >= c.fin else ("en curso" if corte >= c.inicio else "por iniciar")
+    return "cerrada" if cierre >= c.fin else ("en curso" if corte >= c.inicio else "por iniciar")
 
 
 def selector_periodo() -> str:
@@ -328,7 +334,7 @@ def vista_competencias():
                        label_visibility="collapsed")
     comp = COMPETENCIAS[nombres.index(sel)]
     top, cumpl, f = ganadores(pt_all, comp)
-    estado = "Cerrada" if corte >= comp.fin else ("En curso" if corte >= comp.inicio else "Por iniciar")
+    estado = "Cerrada" if cierre >= comp.fin else ("En curso" if corte >= comp.inicio else "Por iniciar")
     if simulacion:
         estado += " (simulación)"
     html(f"""<div class="card comp"><div><span><b>{comp.nombre}</b> <span class="chip">{estado}</span></span>
@@ -346,12 +352,12 @@ def vista_competencias():
 
 
 def vista_calendario():
-    hoy = corte
+    hoy = cierre
     filas = ""
     for i, t in enumerate(TRAMOS):
         if t.fin <= hoy:
             estado, cls = "Cerrado", "pos"
-        elif t.inicio <= hoy:
+        elif t.inicio <= corte:
             estado, cls = "En curso", "oro"
         else:
             estado, cls = "Próximo", ""
