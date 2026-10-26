@@ -203,7 +203,27 @@ header[data-testid="stHeader"], section[data-testid="stSidebar"], [data-testid="
 .st-key-simulacion label p { font-size: .84rem; color: var(--muted); }
 .travesura { margin-top: 6px; font-family: 'Cinzel', serif; color: var(--gold); letter-spacing: 1px; font-size: .78rem; }
 
-.desliza { display: none; }
+/* ---------- Lista del celular: una fila por mago que se despliega con todos sus campos ---------- */
+.lista-movil { display: none; }
+.lm-cab, .fila summary { display: grid; grid-template-columns: 30px minmax(0, 1fr) 44px 58px 14px; align-items: center;
+  gap: 6px; }
+.lm-cab { color: var(--muted); font-size: .66rem; font-weight: 700; letter-spacing: .3px; padding: 10px 2px 8px;
+  border-bottom: 1px solid var(--line); }
+.lm-cab::after { content: ""; }
+.lm-cab .n, .fila .n { text-align: right; font-variant-numeric: tabular-nums; }
+.fila { border-bottom: 1px solid var(--line); }
+.fila:last-child { border-bottom: 0; }
+.fila.corte { border-bottom: 2px solid var(--green); }
+.fila summary { list-style: none; cursor: pointer; padding: 10px 2px; font-size: .88rem; }
+.fila summary::-webkit-details-marker { display: none; }
+.fila summary::after { content: "▾"; color: var(--muted); font-size: .8rem; transition: transform .15s; text-align: right; }
+.fila[open] summary::after { transform: rotate(180deg); }
+.fila .num { font-weight: 700; }
+.fila .pts { color: var(--gold-soft); font-weight: 700; }
+.fila .det { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 2px 2px 12px 36px; }
+.fila .det div { background: var(--panel-2); border-radius: 10px; padding: 8px 10px; display: flex; flex-direction: column; }
+.fila .det span { color: var(--muted); font-size: .7rem; }
+.fila .det b { font-size: .92rem; font-variant-numeric: tabular-nums; }
 /* Desplegable: opciones largas en varias líneas en vez de cortarse */
 [role="listbox"] [role="option"] { white-space: normal !important; height: auto !important; line-height: 1.3; }
 
@@ -212,16 +232,10 @@ header[data-testid="stHeader"], section[data-testid="stSidebar"], [data-testid="
 @media (max-width: 700px) {
   .block-container { padding: .6rem .7rem 2rem !important; }
   .solo-pc, .stElementContainer:has(.solo-pc) { display: none; }
-  /* Todas las columnas también en el celular: la tabla se desliza de lado con # y mago fijos */
-  .std-wrap { -webkit-overflow-scrolling: touch; }
-  .std { min-width: max-content; }
-  .std th, .std td { font-size: .8rem; }
-  .std th:nth-child(-n+2), .std td:nth-child(-n+2) { position: sticky; z-index: 1; background: var(--panel) !important; }
-  .std th:nth-child(1), .std td:nth-child(1) { left: 0; min-width: 34px; }
-  .std th:nth-child(2), .std td:nth-child(2) { left: 34px; max-width: 150px; box-shadow: 6px 0 8px -6px rgba(0,0,0,.6); }
-  .std td:nth-child(2) .tm b { white-space: normal; font-size: .78rem; }
-  .std-wrap.interior .std th, .std-wrap.interior .std td { position: static; box-shadow: none; max-width: none; }
-  .desliza { display: block; color: var(--muted); font-size: .7rem; padding: 8px 2px 0; position: sticky; left: 0; }
+  /* Celular: la tabla se cambia por la lista desplegable (todos los campos al tocar un mago) */
+  .std .pc { display: none; }
+  .std-wrap .tabla-pc { display: none !important; }
+  .lista-movil { display: block; }
   .st-key-periodo input[role="combobox"] { font-size: .86rem !important; }
   .std-wrap { padding: 2px 10px 4px; }
   .std td { padding: 10px 5px; }

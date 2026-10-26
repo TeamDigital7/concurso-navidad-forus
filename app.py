@@ -185,11 +185,12 @@ def tabla_posiciones(r: pd.DataFrame, corte_premio: int | None = None,
                      compacta: bool = False, titulo: str = "") -> str:
     """Tabla de posiciones estilo X: # · escudo + tienda · columnas cortas.
 
-    En el celular se ven todas las columnas: la tabla se desliza de lado con # y el mago fijos.
-    `corte_premio` dibuja la línea verde bajo ese puesto (los que ganan premio).
+    En el celular la tabla se cambia por una lista desplegable: cada mago muestra PTS y % PPTO y, al
+    tocarlo, se abren todos sus campos. `corte_premio` dibuja la línea verde bajo ese puesto (los
+    que ganan premio).
     Devuelve el HTML (para poder armar grillas de varias tablas en un solo bloque).
     """
-    filas = ""
+    filas = tarjetas = ""
     for _, x in r.iterrows():
         pos = int(x["puesto"])
         cls = "corte" if corte_premio and pos == corte_premio else ""
@@ -205,12 +206,26 @@ def tabla_posiciones(r: pd.DataFrame, corte_premio: int | None = None,
           <td><div class="tm"><img src="{escudo(x['casa'])}" alt="{x['casa']}"><b>{x['tienda']}{nota}</b></div></td>
           <td class="n pts">{int(x['puntos'])}</td><td class="n {cumple}">{_pct(x['cumplimiento'])}</td>
           {extra}</tr>"""
+        tarjetas += f"""<details class="fila {cls}"><summary><span class="num">{sello}</span>
+          <div class="tm"><img src="{escudo(x['casa'])}" alt="{x['casa']}"><b>{x['tienda']}{nota}</b></div>
+          <span class="n pts">{int(x['puntos'])}</span><span class="n {cumple}">{_pct(x['cumplimiento'])}</span></summary>
+          <div class="det">
+            <div><span>Puntos por venta</span><b>{int(x['pts_venta'])}</b></div>
+            <div><span>Puntos bonus</span><b>{int(x['pts_bonus'])}</b></div>
+            <div><span>% Presupuesto</span><b class="{cumple}">{_pct(x['cumplimiento'], dec=1)}</b></div>
+            <div><span>SSS</span><b class="{crece}">{_pct(x['sss'], True, 1)}</b></div>
+            <div><span>Fidelización</span><b>{_pct(x['fidelizacion'], dec=1)}</b></div>
+            <div><span>Casa</span><b>{x['casa']}</b></div>
+            <div><span>Venta</span><b>{soles(x['venta'])}</b></div>
+            <div><span>Presupuesto</span><b>{soles(x['presupuesto'])}</b></div>
+          </div></details>"""
     th_extra = "" if compacta else ('<th class="n pc">VENTA</th><th class="n pc">BONUS</th><th class="n pc">SSS</th>'
                                     '<th class="n pc">FID</th><th class="n pc">VENTA S/</th>')
-    desliza = "" if compacta else '<div class="desliza">Desliza la tabla → para ver todas las columnas</div>'
-    return f"""<div class="std-wrap">{titulo}{desliza}<table class="std"><thead><tr><th class="num">#</th><th>MAGO</th>
+    return f"""<div class="std-wrap">{titulo}<table class="std tabla-pc"><thead><tr><th class="num">#</th><th>MAGO</th>
       <th class="n">PTS</th><th class="n">% PPTO</th>{th_extra}</tr></thead>
-      <tbody>{filas}</tbody></table></div>"""
+      <tbody>{filas}</tbody></table>
+      <div class="lista-movil"><div class="lm-cab"><span>#</span><span>MAGO · toca para ver el detalle</span>
+        <span class="n">PTS</span><span class="n">% PPTO</span></div>{tarjetas}</div></div>"""
 
 
 def relojes_casas() -> str:
