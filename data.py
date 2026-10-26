@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-from concurso import FIN, INICIO, TIENDA_A_CASA
+from concurso import COMPETENCIAS, DESAFIOS_SSS, FIN, INICIO, TIENDA_A_CASA
 
 COLUMNAS = ["fecha", "tienda", "venta", "presupuesto", "venta_ly", "tickets",
             "tickets_fidelizados", "unidades"]
@@ -62,7 +62,7 @@ def config_bigquery() -> dict | None:
     return cfg
 
 
-def _leer_presupuesto(client, cfg: dict, bigquery) -> pd.DataFrame | None:
+def _leer_presupuesto(client, cfg: dict, bigquery, inicio: date, fin: date) -> pd.DataFrame | None:
     """Presupuesto diario por tienda: tabla configurable (fecha, tienda, presupuesto)."""
     tabla = cfg.get("presupuesto_table")
     if not tabla:
@@ -75,12 +75,12 @@ def _leer_presupuesto(client, cfg: dict, bigquery) -> pd.DataFrame | None:
         WHERE DATE({cfg.get('presupuesto_col_fecha', 'fecha')}) BETWEEN @inicio AND @fin
         GROUP BY fecha, tienda"""
     return client.query(sql, job_config=bigquery.QueryJobConfig(query_parameters=[
-        bigquery.ScalarQueryParameter("inicio", "DATE", INICIO),
-        bigquery.ScalarQueryParameter("fin", "DATE", FIN),
+        bigquery.ScalarQueryParameter("inicio", "DATE", inicio),
+        bigquery.ScalarQueryParameter("fin", "DATE", fin),
     ])).to_dataframe()
 
 
-def _leer_bigquery(cfg: dict) -> pd.DataFrame:
+def _leer_bigquery(cfg: dict, inicio: date = INICIO, fin: date = FIN) -> pd.DataFrame:
     from google.cloud import bigquery
     from google.oauth2 import service_account
 
@@ -92,12 +92,12 @@ def _leer_bigquery(cfg: dict) -> pd.DataFrame:
         col_venta=cfg.get("ventas_col_monto", "venta_total_sin_iva"),
     )
     venta = client.query(sql, job_config=bigquery.QueryJobConfig(query_parameters=[
-        bigquery.ScalarQueryParameter("inicio", "DATE", INICIO),
-        bigquery.ScalarQueryParameter("fin", "DATE", FIN),
+        bigquery.ScalarQueryParameter("inicio", "DATE", inicio),
+        bigquery.ScalarQueryParameter("fin", "DATE", fin),
         bigquery.ArrayQueryParameter("tiendas", "STRING", list(TIENDA_A_CASA)),
         bigquery.ArrayQueryParameter("genericos", "STRING", list(CLIENTES_GENERICOS)),
     ])).to_dataframe()
-    ppto = _leer_presupuesto(client, cfg, bigquery)
+    ppto = _leer_presupuesto(client, cfg, bigquery, inicio, fin)
     if ppto is None:
         # Sin tabla de presupuesto no se puede medir cumplimiento: queda en 0 y la app lo avisa
         venta["presupuesto"] = 0.0
@@ -107,15 +107,15 @@ def _leer_bigquery(cfg: dict) -> pd.DataFrame:
     return venta
 
 
-def _ejemplo(seed: int = 7) -> pd.DataFrame:
+def _ejemplo(seed: int = 7, inicio: date = INICIO, fin: date = FECHA_DEMO) -> pd.DataFrame:
     rng = np.random.default_rng(seed)
     filas = []
-    dias = (FECHA_DEMO - INICIO).days + 1
+    dias = (fin - inicio).days + 1
     for tienda in TIENDA_A_CASA:
         base = rng.uniform(4000, 22000)
         sesgo = rng.normal(1.0, 0.05)
         for d in range(dias):
-            dia = INICIO + timedelta(days=d)
+            dia = inicio + timedelta(days=d)
             factor = 1 + d * 0.012 + (0.3 if dia.weekday() >= 5 else 0)
             presupuesto = base * factor
             venta = presupuesto * rng.normal(sesgo, 0.09)
@@ -130,11 +130,43 @@ def _ejemplo(seed: int = 7) -> pd.DataFrame:
     return pd.DataFrame(filas)
 
 
+def _normalizar(df: pd.DataFrame) -> pd.DataFrame:
+    df["fecha"] = pd.to_datetime(df["fecha"])
+    df["tienda"] = df["tienda"].astype(str).str.strip().str.upper()
+    df["casa"] = df["tienda"].map(TIENDA_A_CASA)
+    return df[df["casa"].notna()].reset_index(drop=True)
+
+
 @st.cache_data(ttl=900, show_spinner="Consultando la venta…")
 def cargar_datos() -> tuple[pd.DataFrame, str]:
     cfg = config_bigquery()
     df, fuente = (_leer_bigquery(cfg), "BigQuery") if cfg else (_ejemplo(), "Datos de ejemplo")
-    df["fecha"] = pd.to_datetime(df["fecha"])
-    df["tienda"] = df["tienda"].astype(str).str.strip().str.upper()
-    df["casa"] = df["tienda"].map(TIENDA_A_CASA)
-    return df[df["casa"].notna()].reset_index(drop=True), fuente
+    return _normalizar(df), fuente
+
+
+@st.cache_data(ttl=900, show_spinner="Armando el pronóstico…")
+def cargar_pronostico() -> tuple[pd.DataFrame, str, date, date, bool]:
+    """Antes del concurso: la venta real de los últimos días jugada como si fuera la 1ª competencia.
+
+    Se toman los últimos N días con venta (N = días de la 1ª competencia) y se corren las fechas
+    para que caigan en sus tramos, así puntos.py aplica las reglas tal cual. Devuelve también las
+    fechas reales de la ventana y si el presupuesto es referencial (venta LY + desafío SSS del mes).
+    """
+    comp = COMPETENCIAS[0]
+    n = (comp.fin - comp.inicio).days + 1
+    fin = min(date.today(), INICIO) - timedelta(days=1)
+    inicio = fin - timedelta(days=n + 6)  # margen por si la tabla viene con días de atraso
+    cfg = config_bigquery()
+    df, fuente = ((_leer_bigquery(cfg, inicio, fin), "BigQuery") if cfg
+                  else (_ejemplo(inicio=inicio, fin=fin), "Datos de ejemplo"))
+    df = _normalizar(df)
+    if df.empty:
+        return df, fuente, inicio, fin, False
+    hasta = df["fecha"].max()
+    desde = hasta - pd.Timedelta(days=n - 1)
+    df = df[df["fecha"] >= desde].copy()
+    df["fecha"] += pd.Timestamp(comp.inicio) - desde
+    referencial = df["presupuesto"].sum() == 0
+    if referencial:
+        df["presupuesto"] = df["venta_ly"] * (1 + DESAFIOS_SSS.get(comp.inicio.month, 0))
+    return df.reset_index(drop=True), fuente, desde.date(), hasta.date(), referencial
