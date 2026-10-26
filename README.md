@@ -61,7 +61,7 @@ venta retail que usa Forusight (ForusIQ): `forus-analitica-prod-datalake.silver.
 | tickets | `COUNT(DISTINCT nrodoc_lv)` |
 | tickets fidelizados | regla "Registro Válido" de Power BI sobre `bronze.stg_pe_central_ventas_bi` (ver abajo); si no se puede leer, tickets con `rutcli_lv` de un cliente real |
 | unidades | `SUM(unidades_venta)` |
-| presupuesto | **pendiente**: `presupuesto_table` en los secrets |
+| presupuesto | `presupuesto_table` en los secrets. Las columnas de fecha, tienda (nombre o código) y monto se detectan solas o se fijan con `presupuesto_col_fecha`, `_tienda`, `_valor`. Si el monto es mensual (fechas en día 1) se reparte parejo por día. Si la tabla falla, la app avisa en vez de caerse |
 
 Las tiendas se cruzan por nombre con `concurso.TIENDAS`; 83 de las 90 coinciden con el maestro
 de tiendas de ForusIQ. Faltan los nombres de Parfois (4), Olympikus Mega Plaza, Vans Outlet Jockey
