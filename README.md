@@ -92,8 +92,9 @@ frescos como la carga de `ft_pe_venta_retail`.
 ## Simulación con la venta real de septiembre y octubre
 
 El interruptor **🔮 Simulación** (arriba, o el link `?simulacion=1`) juega todo el torneo con la
-venta real de septiembre y octubre: los dos tramos tienen 61 días y calzan día a día con
-noviembre y diciembre (01/09 → 01/11, 31/10 → 31/12), así que se ven las 4 competencias, sus
+venta real de septiembre y octubre, corrida exactamente 9 semanas para que cada día caiga en el
+mismo día de la semana que en el torneo (domingo 30/08 → domingo 01/11, 29/10 → 31/12), así que se
+ven las 4 competencias, sus
 ganadores, el calendario y la Copa con las reglas reales. Antes del 01/11 viene encendido; después
 queda como opción. Si no hay presupuesto para set–oct, la meta es la venta del año pasado + el
 desafío SSS del mes simulado (`data.cargar_simulacion`).

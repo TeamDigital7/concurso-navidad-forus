@@ -391,9 +391,11 @@ def cargar_datos() -> tuple[pd.DataFrame, str]:
 
 
 # Simulación: la venta real de septiembre y octubre jugada como si fuera noviembre y diciembre.
-# Los dos tramos tienen 61 días, así que calzan día a día (01/09 → 01/11, 31/10 → 31/12).
-SIM_INICIO = date(2026, 9, 1)
-SIM_DESFASE = INICIO - SIM_INICIO
+# Se corre exactamente 9 semanas para que cada día caiga en el mismo día de la semana que en el
+# torneo (lunes vs. lunes): arranca el domingo 30/08 → domingo 01/11 y llega al 29/10 → 31/12.
+SIM_DESFASE = timedelta(weeks=9)
+SIM_INICIO = INICIO - SIM_DESFASE
+SIM_FIN = FIN - SIM_DESFASE
 
 
 @st.cache_data(ttl=ACTUALIZAR_CADA_MIN * 60 - 30, show_spinner="Armando la simulación…")
@@ -404,7 +406,7 @@ def cargar_simulacion() -> tuple[pd.DataFrame, str, date, date, bool]:
     fechas reales usadas y si el presupuesto es referencial (sin presupuesto cargado para esas
     fechas: venta LY + desafío SSS del mes simulado).
     """
-    fin = min(date.today(), INICIO) - timedelta(days=1)
+    fin = min(date.today() - timedelta(days=1), SIM_FIN)
     cfg = config_bigquery()
     df, fuente = ((_leer_bigquery(cfg, SIM_INICIO, fin), "BigQuery") if cfg
                   else (_ejemplo(inicio=SIM_INICIO, fin=fin), "Datos de ejemplo"))
