@@ -285,3 +285,6 @@ div[data-testid="stVerticalBlockBorderWrapper"] {
 .pronostico .t { color: #F3D778; font-weight: 600; margin-bottom: 2px; }
 .pronostico span b { color: var(--text); }
 .pronostico span { color: var(--muted); }
+
+/* Línea "En vivo" con la hora de la última consulta */
+.en-vivo { color: var(--muted); font-size: .75rem; text-align: right; margin: -4px 0 8px; }

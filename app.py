@@ -1,4 +1,5 @@
 import base64
+import time
 from datetime import date, timedelta
 from functools import cache
 from pathlib import Path
@@ -11,7 +12,7 @@ from auth import auth_configurada, requerir_login, usuario
 from concurso import (CASAS, COMPETENCIAS, DESAFIOS_SSS, FIN, GANADOR_2025, INICIO, MAESTROS_CC,
                       MAESTROS_TIENDA, NOTAS_TIENDA, PREMIO_CAMPEON, RANGO_PAGO, REGLAMENTO, TIENDAS,
                       TRAMOS, BONUS_FIDELIZACION, BONUS_SSS)
-from data import cargar_datos, cargar_pronostico
+from data import ACTUALIZAR_CADA_MIN, cargar_datos, cargar_pronostico
 from puntos import factor_pago, ganadores, puntos_por_tramo, ranking, resumen_casas
 
 st.set_page_config(page_title="Forus y el Cáliz de los Campeones", page_icon="🏆", layout="wide")
@@ -343,6 +344,24 @@ def vista_ranking():
     if zona and not casa:
         st.caption("🎁 marca a quienes hoy están en el top 5 de su casa.")
 
+
+@st.fragment(run_every=timedelta(minutes=ACTUALIZAR_CADA_MIN))
+def auto_actualizar():
+    """En vivo: cada N minutos vuelve a correr toda la app; si el caché venció, trae la venta nueva.
+
+    El fragmento también corre en cada recarga completa: solo dispara si ya pasó el intervalo
+    desde la última, para no entrar en un bucle de recargas.
+    """
+    if time.time() - st.session_state.get("ultima_carga", 0) >= ACTUALIZAR_CADA_MIN * 60 - 5:
+        st.rerun()
+
+
+st.session_state["ultima_carga"] = time.time()
+auto_actualizar()
+consultado = df_all.attrs.get("consultado")
+html(f'<div class="en-vivo"><span class="live">En vivo</span>'
+     f'{f" · venta consultada a las {consultado:%H:%M}" if consultado else ""}'
+     f' · se actualiza sola cada {ACTUALIZAR_CADA_MIN} min</div>')
 
 # ---------- Páginas ----------
 if pagina.endswith(("Ranking", "Gran Salón", "Casas", "Competencias", "Copa del Mejor Mago")):
