@@ -1,5 +1,5 @@
 import base64
-from datetime import date
+from datetime import date, timedelta
 from functools import cache
 from pathlib import Path
 
@@ -11,7 +11,7 @@ from auth import auth_configurada, requerir_login, usuario
 from concurso import (CASAS, COMPETENCIAS, DESAFIOS_SSS, FIN, GANADOR_2025, INICIO, MAESTROS_CC,
                       MAESTROS_TIENDA, NOTAS_TIENDA, PREMIO_CAMPEON, RANGO_PAGO, REGLAMENTO, TIENDAS,
                       TRAMOS, BONUS_FIDELIZACION, BONUS_SSS)
-from data import cargar_datos
+from data import cargar_datos, cargar_pronostico
 from puntos import factor_pago, ganadores, puntos_por_tramo, ranking, resumen_casas
 
 st.set_page_config(page_title="Forus y el Cáliz de los Campeones", page_icon="🏆", layout="wide")
@@ -48,9 +48,16 @@ if not requerir_login():
 
 # ---------- Datos ----------
 df_all, fuente = cargar_datos()
+# Antes del 01/11 no hay venta del concurso: se muestra un pronóstico con la venta de los últimos días
+pronostico = None
+desfase = timedelta(0)
 if df_all.empty:
-    st.info(f"Fuente: {fuente}. Todavía no hay ventas del concurso (empieza el {INICIO:%d/%m/%Y}).")
-    st.stop()
+    df_all, fuente, p_desde, p_hasta, p_referencial = cargar_pronostico()
+    if df_all.empty:
+        st.info(f"Fuente: {fuente}. Todavía no hay ventas del concurso (empieza el {INICIO:%d/%m/%Y}).")
+        st.stop()
+    pronostico = {"desde": p_desde, "hasta": p_hasta, "referencial": p_referencial}
+    desfase = COMPETENCIAS[0].inicio - p_desde
 if df_all["presupuesto"].sum() == 0:
     st.warning("No hay presupuesto cargado: falta configurar `presupuesto_table` en los secrets. "
                "Sin presupuesto no se puede calcular el cumplimiento ni los puntos por venta.")
@@ -59,6 +66,8 @@ pt_all = puntos_por_tramo(df_all, hasta=corte)
 rank_all = ranking(pt_all)
 casas = resumen_casas(rank_all)
 comp_actual = next((c for c in COMPETENCIAS if c.inicio <= corte <= c.fin), COMPETENCIAS[-1])
+# Fecha real de los datos (en el pronóstico, `corte` es la fecha simulada dentro del concurso)
+corte_real = pronostico["hasta"] if pronostico else corte
 
 # ---------- Sidebar ----------
 with st.sidebar:
@@ -74,7 +83,7 @@ with st.sidebar:
         label_visibility="collapsed",
     )
     st.divider()
-    html(f'<div class="fuente">Fuente: {fuente} · corte {corte:%d/%m/%Y}</div>')
+    html(f'<div class="fuente">Fuente: {fuente} · corte {corte_real:%d/%m/%Y}</div>')
     if auth_configurada():
         html(f'<div class="fuente">👤 {usuario()}</div>')
         if st.button("Cerrar sesión", use_container_width=True):
@@ -105,9 +114,26 @@ def filtros_de_ranking(r: pd.DataFrame, clave: str, top: int | None = None) -> p
 
 
 # ---------- Componentes ----------
+def aviso_pronostico():
+    if not pronostico:
+        return
+    faltan = (INICIO - date.today()).days
+    cuenta = f"faltan {faltan} días" if faltan > 1 else ("empieza mañana" if faltan == 1 else "empieza hoy")
+    comp = COMPETENCIAS[0]
+    meta = (f" Como aún no hay presupuesto cargado, la meta es referencial: venta del año pasado "
+            f"+{DESAFIOS_SSS.get(comp.inicio.month, 0):.0%} (desafío SSS de noviembre).") if pronostico["referencial"] else ""
+    texto = (f"Así quedaría <b>{comp.nombre}</b> si se jugara con la venta real del "
+             f"{pronostico['desde']:%d/%m} al {pronostico['hasta']:%d/%m}, con las mismas reglas de puntos. "
+             f"Estos puntos no cuentan: sirven para que cada tienda vea su potencial.{meta}")
+    html(f"""<div class="pronostico"><div class="t">🔮 Pronóstico · el concurso empieza el {INICIO:%d/%m} ({cuenta})</div>
+      <span>{texto}</span></div>""")
+
+
 def hero():
     total = (FIN - INICIO).days + 1
     dia = min(max((corte - INICIO).days + 1, 0), total)
+    if pronostico:
+        dia = 0
     portada = img_uri("portada.jpg")
     # La portada del PPT ya trae el título; sin imagen se dibuja en texto
     fondo = f"background-image: url('{portada}'); --portada: url('{portada}');" if portada else ""
@@ -120,7 +146,7 @@ def hero():
         <b>{comp_actual.nombre}</b><br>
         📅 {comp_actual.inicio:%d/%m} – {comp_actual.fin:%d/%m} · pago {comp_actual.pago:%d/%m}
         <div class="progress-bar"><div style="width:{dia / total:.0%}"></div></div>
-        Día {dia} de {total} del torneo
+        {f"Empieza el {INICIO:%d/%m/%Y} · {total} días de torneo" if pronostico else f"Día {dia} de {total} del torneo"}
       </div>
     </div>
     """)
@@ -146,7 +172,7 @@ def kpis():
     venta, ppto, ly = df_all["venta"].sum(), df_all["presupuesto"].sum(), df_all["venta_ly"].sum()
     cumpl = venta / ppto if ppto else 0.0
     sss = venta / ly - 1 if ly else 0.0
-    meta_sss = DESAFIOS_SSS.get(corte.month, 0)
+    meta_sss = DESAFIOS_SSS.get(corte.month, 0)  # en el pronóstico, corte cae en noviembre
     fid = df_all["tickets_fidelizados"].sum() / df_all["tickets"].sum()
     f = factor_pago(cumpl)
     items = [
@@ -165,7 +191,7 @@ def kpis():
       </div>""" for ic, lbl, val, ok, sub in items)
     html(f"""
     <div class="section-title"><h3>Indicadores del canal Retail</h3>
-      <span class="live">Actualizado al {corte:%d/%m/%Y}</span></div>
+      <span class="live">{'Pronóstico con venta al' if pronostico else 'Actualizado al'} {corte_real:%d/%m/%Y}</span></div>
     <div class="kpis">{cards}</div>
     """)
 
@@ -185,6 +211,7 @@ def _layout(fig, h=320, soles_y=True):
 
 def grafico_tendencia():
     d = df_all.groupby("fecha", as_index=False)[["venta", "presupuesto"]].sum()
+    d["fecha"] -= desfase  # en el pronóstico se muestran las fechas reales
     fig = go.Figure()
     fig.add_bar(x=d["fecha"], y=d["venta"], name="Venta", marker=dict(color="#B8862F", line=dict(width=0)))
     fig.add_scatter(x=d["fecha"], y=d["presupuesto"], name="Presupuesto", mode="lines",
@@ -196,6 +223,7 @@ def grafico_tendencia():
 def grafico_carrera():
     d = pt_all[pt_all["cerrado"]].groupby(["fin", "casa"], as_index=False)["puntos"].sum()
     d = d.sort_values("fin")
+    d["fin"] = d["fin"] - desfase
     d["acumulado"] = d.groupby("casa")["puntos"].cumsum() / d["casa"].map(casas.set_index("casa")["magos"])
     fig = go.Figure()
     for casa, g in d.groupby("casa"):
@@ -317,6 +345,9 @@ def vista_ranking():
 
 
 # ---------- Páginas ----------
+if pagina.endswith(("Ranking", "Gran Salón", "Casas", "Competencias", "Copa del Mejor Mago")):
+    aviso_pronostico()
+
 if pagina.endswith("Ranking"):
     vista_ranking()
 
@@ -365,6 +396,8 @@ elif pagina.endswith("Competencias"):
     comp = COMPETENCIAS[nombres.index(sel)]
     top, cumpl, f = ganadores(pt_all, comp)
     estado = "Cerrada" if corte >= comp.fin else ("En curso" if corte >= comp.inicio else "Por iniciar")
+    if pronostico:
+        estado = "Pronóstico" if comp == COMPETENCIAS[0] else "Por iniciar"
     premios = " · ".join(f"{i}° {soles(p)}" for i, p in enumerate(comp.premios, 1))
     html(f"""
     <div class="comp-head">
@@ -403,9 +436,10 @@ elif pagina.endswith("Copa del Mejor Mago"):
 
 elif pagina.endswith("Calendario de puntos"):
     filas = ""
+    hoy = corte_real if pronostico else corte  # el pronóstico no cierra tramos
     for i, t in enumerate(TRAMOS):
-        estado = "✅ Cerrado" if t.fin <= corte else ("⏳ En curso" if t.inicio <= corte else "🔒 Próximo")
-        ganan = int((pt_all.loc[pt_all["tramo"] == i, "pts_venta"] > 0).sum()) if t.fin <= corte else "–"
+        estado = "✅ Cerrado" if t.fin <= hoy else ("⏳ En curso" if t.inicio <= hoy else "🔒 Próximo")
+        ganan = int((pt_all.loc[pt_all["tramo"] == i, "pts_venta"] > 0).sum()) if t.fin <= hoy else "–"
         filas += f"""<tr><td>{t.inicio:%B}</td><td>Del {t.inicio.day} al {t.fin.day}</td>
           <td class="num pts">{t.puntos}</td><td>{estado}</td><td class="num">{ganan}</td></tr>"""
     c1, c2 = st.columns([1.4, 1], gap="large")

@@ -68,3 +68,12 @@ de tiendas de ForusIQ. Faltan los nombres de Parfois (4), Olympikus Mega Plaza, 
 y CLB Outlet Jockey en la tabla de venta.
 
 Sin secrets la app usa datos de ejemplo.
+
+## Pronóstico antes del 01/11
+
+Mientras no hay venta del concurso, la app muestra un **pronóstico**: toma los últimos 15 días con
+venta (lo que dura La Copa de Quidditch), los juega como si fueran esa competencia con las mismas
+reglas de puntos y los muestra en Ranking, Gran Salón, Casas, Competencias y Copa con un aviso
+🔮. Si todavía no hay presupuesto cargado, la meta es referencial: venta del año pasado + el
+desafío SSS de noviembre (+24%). Desde el 01/11 la app pasa sola a la venta real del concurso
+(`data.cargar_pronostico`).
