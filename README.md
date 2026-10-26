@@ -104,6 +104,12 @@ desafío SSS del mes simulado (`data.cargar_simulacion`).
 Streamlit Community Cloud duerme las apps sin visitas por varias horas. La tarea
 `.github/workflows/mantener-despierta.yml` abre la app cada 3 horas con un navegador real
 (`.github/scripts/despertar.py`) y, si está dormida, aprieta «get this app back up». Se puede correr
-a mano desde la pestaña **Actions** → «Mantener despierta la app» → *Run workflow*. Como el repo es
-público, cada corrida vuelve a habilitar la tarea para que GitHub no la apague a los 60 días sin
-actividad.
+a mano desde la pestaña **Actions** → «Mantener despierta la app» → *Run workflow*. Cada corrida
+vuelve a habilitar la tarea (GitHub apaga las tareas programadas de repos públicos a los 60 días sin
+actividad; hoy el repo es privado, pero así sigue funcionando si vuelve a ser público).
+
+## Presentación del concurso
+
+`assets/concurso.pdf` es la presentación oficial (reglamento, puntos, premios, casas y maestros) y
+se descarga desde la pestaña Reglas. Tiene montos de premios y datos del equipo: el repo debe
+seguir siendo **privado**.
