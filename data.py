@@ -132,6 +132,10 @@ def _ejemplo(seed: int = 7, inicio: date = INICIO, fin: date = FECHA_DEMO) -> pd
 
 def _normalizar(df: pd.DataFrame) -> pd.DataFrame:
     df["fecha"] = pd.to_datetime(df["fecha"])
+    # BigQuery entrega NUMERIC como Decimal (y enteros como Int64 con nulos): todo a float
+    for col in COLUMNAS[2:]:
+        if col in df:
+            df[col] = pd.to_numeric(df[col], errors="coerce").astype(float).fillna(0.0)
     df["tienda"] = df["tienda"].astype(str).str.strip().str.upper()
     df["casa"] = df["tienda"].map(TIENDA_A_CASA)
     return df[df["casa"].notna()].reset_index(drop=True)
