@@ -58,7 +58,14 @@ WHERE a.fecha BETWEEN @inicio AND @fin
 # 'perucentral ventas_bi' (ft_pe_venta_retail no trae el correo). Regla, igual que el DAX:
 #   ruc_cliente numérico >= 99999991 → no; correo que empieza con "be@" o contiene "ecommerce@",
 #   "xxx@" o "@forus" → no; correo sin "@" → no. Mayúsculas/minúsculas no importan (SEARCH).
-TABLA_VENTAS_BI = "forus-analitica-prod-datalake.bronze.stg_pe_central_ventas_bi"
+# Tablas donde buscar el correo del cliente, en orden. En Power BI la tabla es 'perucentral ventas_bi',
+# que en BigQuery sigue el patrón pe_bronze.stg_pe_perucentral_* (como pedidos y locales en ForusIQ).
+# Se usa la primera que tenga las columnas y ventas en el periodo; ft_pe_venta_retail entra primero
+# si resulta traer el correo (así se usan exactamente los mismos tickets que la venta).
+TABLAS_BI = [
+    "forus-analitica-prod-datalake.pe_bronze.stg_pe_perucentral_ventas_bi",
+    "forus-analitica-prod-datalake.bronze.stg_pe_central_ventas_bi",
+]
 RUC_GENERICO_DESDE = 99999991
 CORREOS_EXCLUIDOS = r"ecommerce@|xxx@|@forus"
 # Nombres posibles de cada columna; se detectan con INFORMATION_SCHEMA (como en ForusIQ) y se
@@ -89,13 +96,15 @@ GROUP BY 1, 2
 """
 
 
-def _tabla_bi(cfg: dict) -> str:
+def _tablas_bi(cfg: dict, tabla_venta: str) -> list[str]:
+    """Candidatas en orden: la fijada en los secrets, la de venta (si trae correo) y las ventas_bi."""
+    tablas = []
     if cfg.get("fidelizacion_table"):
-        return cfg["fidelizacion_table"]
-    # Si en los secrets la tabla de ventas es la ventas_bi, se usa esa
+        tablas.append(cfg["fidelizacion_table"])
     if "ventas_bi" in str(cfg.get("ventas_table", "")):
-        return cfg["ventas_table"]
-    return TABLA_VENTAS_BI
+        tablas.append(cfg["ventas_table"])
+    tablas += [tabla_venta] + TABLAS_BI
+    return list(dict.fromkeys(t.replace("`", "") for t in tablas))
 
 
 def _columnas(client, bigquery, tabla: str) -> dict[str, str]:
@@ -128,8 +137,10 @@ def _mapear(cfg: dict, prefijo: str, alias_por_campo: dict, columnas: dict[str, 
 
 
 def _sql_fecha(col: str, tipo: str) -> str:
-    if tipo == "STRING":
-        return f"SAFE_CAST(LEFT(TRIM({col}), 10) AS DATE)"
+    if tipo == "STRING":  # 2026-10-26, 26/10/2026 o 20261026 (con o sin hora)
+        t = f"TRIM({col})"
+        return (f"COALESCE(SAFE_CAST(LEFT({t}, 10) AS DATE), SAFE.PARSE_DATE('%d/%m/%Y', LEFT({t}, 10)), "
+                f"SAFE.PARSE_DATE('%Y%m%d', LEFT({t}, 8)))")
     if tipo in ("INT64", "NUMERIC", "BIGNUMERIC"):  # 20261025
         return f"SAFE.PARSE_DATE('%Y%m%d', CAST({col} AS STRING))"
     return f"DATE({col})"
@@ -170,36 +181,59 @@ def _traducir_tiendas(client, bigquery, df: pd.DataFrame, tabla_venta: str, para
     return df.rename(columns={"clave": "tienda"})
 
 
-def _leer_fidelizacion(client, cfg: dict, bigquery, inicio: date, fin: date,
-                       tabla_venta: str) -> tuple[pd.DataFrame | None, str]:
-    """Fidelización por día y tienda con la regla de Power BI. Devuelve (datos o None, aviso)."""
-    tabla = _tabla_bi(cfg)
+def _probar_tabla_bi(client, cfg: dict, bigquery, tabla: str, params) -> tuple[pd.DataFrame | None, dict]:
+    """Intenta leer la fidelización de una tabla. Devuelve (datos o None, detalle del intento)."""
+    intento = {"tabla": tabla, "estado": "", "columnas": {}}
     try:
         columnas = _columnas(client, bigquery, tabla)
     except Exception as e:  # sin permiso de metadatos, tabla mal escrita, etc.
-        return None, f"No se pudo leer `{tabla}` ({type(e).__name__})."
+        intento["estado"] = f"no se pudo leer ({type(e).__name__})"
+        return None, intento
     if not columnas:
-        return None, f"No se encontró la tabla `{tabla}`."
+        intento["estado"] = "no existe"
+        return None, intento
     mapa = _mapear(cfg, "fidelizacion_col", ALIAS_BI, columnas)
+    intento["columnas"] = mapa
     faltan = [c for c in OBLIGATORIAS_BI if c not in mapa]
     if faltan:
-        return None, (f"En `{tabla}` no se encontraron las columnas de {', '.join(faltan)}. "
-                      f"Columnas de la tabla: {', '.join(columnas)}.")
-    params = [bigquery.ScalarQueryParameter("inicio", "DATE", inicio),
-              bigquery.ScalarQueryParameter("fin", "DATE", fin)]
+        intento["estado"] = f"sin columna de {', '.join(faltan)}"
+        return None, intento
     try:
         fid = client.query(sql_fidelizacion(tabla, mapa, columnas),
                            job_config=bigquery.QueryJobConfig(query_parameters=params)).to_dataframe()
     except Exception as e:
-        return None, f"Falló la consulta de fidelización en `{tabla}` ({type(e).__name__}: {str(e)[:200]})."
+        intento["estado"] = f"falló la consulta ({type(e).__name__}: {str(e)[:160]})"
+        return None, intento
     if fid.empty:
-        return None, f"`{tabla}` no tiene ventas del {inicio:%d/%m} al {fin:%d/%m}."
+        intento["estado"] = "sin ventas en el periodo"
+        return None, intento
+    intento["estado"] = "en uso"
+    return fid, intento
+
+
+def _leer_fidelizacion(client, cfg: dict, bigquery, inicio: date, fin: date,
+                       tabla_venta: str) -> tuple[pd.DataFrame | None, str, list[dict]]:
+    """Fidelización por día y tienda con la regla de Power BI, de la primera tabla que sirva.
+
+    Devuelve (datos o None, aviso, intentos): los intentos se muestran en la vista de diagnóstico.
+    """
+    params = [bigquery.ScalarQueryParameter("inicio", "DATE", inicio),
+              bigquery.ScalarQueryParameter("fin", "DATE", fin)]
+    intentos = []
+    for tabla in _tablas_bi(cfg, tabla_venta):
+        fid, intento = _probar_tabla_bi(client, cfg, bigquery, tabla, params)
+        intentos.append(intento)
+        if fid is not None:
+            break
+    else:
+        return None, "Ninguna tabla trae el correo del cliente para el periodo.", intentos
     fid = _traducir_tiendas(client, bigquery, fid, tabla_venta, params)
     fid["fecha"] = pd.to_datetime(fid["fecha"])
     for c in ("tickets_bi", "fidelizados_bi"):
         fid[c] = pd.to_numeric(fid[c], errors="coerce").astype(float)
     fid = fid.groupby(["fecha", "tienda"], as_index=False)[["tickets_bi", "fidelizados_bi"]].sum()
-    return fid, f"Fidelización con la regla de Power BI (correo válido), de `{tabla}` al {fid['fecha'].max():%d/%m}."
+    intentos[-1]["desde"], intentos[-1]["hasta"] = fid["fecha"].min().date(), fid["fecha"].max().date()
+    return fid, f"Fidelización con la regla de Power BI (correo válido), de `{tabla}` al {fid['fecha'].max():%d/%m}.", intentos
 
 
 def aplicar_fidelizacion(venta: pd.DataFrame, fid: pd.DataFrame) -> pd.DataFrame:
@@ -213,6 +247,9 @@ def aplicar_fidelizacion(venta: pd.DataFrame, fid: pd.DataFrame) -> pd.DataFrame
     tasa = v["fidelizados_bi"] / v["tickets_bi"].replace(0, np.nan)
     tickets = pd.to_numeric(v["tickets"], errors="coerce").astype(float)
     actual = pd.to_numeric(v["tickets_fidelizados"], errors="coerce").astype(float)
+    # Para el diagnóstico: el resultado con la regla por RUC y qué días traen la regla de Power BI
+    v["fid_ruc"] = actual
+    v["con_bi"] = tasa.notna()
     v["tickets_fidelizados"] = np.where(tasa.notna(), (tickets * tasa).round(), actual)
     return v.drop(columns=["tickets_bi", "fidelizados_bi"])
 
@@ -339,10 +376,14 @@ def _leer_bigquery(cfg: dict, inicio: date = INICIO, fin: date = FIN) -> pd.Data
             venta["fecha"] = pd.to_datetime(venta["fecha"])
             venta = venta.merge(ppto, on=["fecha", "tienda"], how="left")
             venta["presupuesto"] = venta["presupuesto"].fillna(0.0)
-    fid, aviso = _leer_fidelizacion(client, cfg, bigquery, inicio, fin, tabla_venta)
+    fid, aviso, intentos = _leer_fidelizacion(client, cfg, bigquery, inicio, fin, tabla_venta)
     if fid is not None:
         venta = aplicar_fidelizacion(venta, fid)
+    else:
+        venta["fid_ruc"] = pd.to_numeric(venta["tickets_fidelizados"], errors="coerce")
+        venta["con_bi"] = False
     venta.attrs["fidelizacion"] = (aviso, fid is not None)
+    venta.attrs["fidelizacion_intentos"] = intentos
     venta.attrs["presupuesto"] = aviso_ppto
     return venta
 

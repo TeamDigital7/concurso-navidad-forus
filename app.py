@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 from functools import cache
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import streamlit as st
 
@@ -485,13 +486,60 @@ def vista_reglas():
             st.logout()
 
 
+def _rango(intento: dict) -> str:
+    if "desde" not in intento:
+        return "–"
+    return f"{intento['desde']:%d/%m} – {intento['hasta']:%d/%m}"
+
+
+def vista_diagnostico():
+    """De dónde sale la fidelización y su % por tienda con las dos reglas, para cuadrar con Power BI."""
+    aviso, regla_bi = df_all.attrs.get("fidelizacion", ("Datos de ejemplo: sin consulta a BigQuery.", False))
+    real = (simulacion["desde"], simulacion["hasta"]) if simulacion else (df_all["fecha"].min().date(), corte)
+    html(f"""<div class="card"><div class="card-h">Fidelización · de dónde sale</div>
+      <p class="reglas-p">{"✅" if regla_bi else "⚠️"} {aviso}</p>
+      <p class="reglas-p">Ventas del {real[0]:%d/%m/%Y} al {real[1]:%d/%m/%Y}{" (simulación)" if simulacion else ""}.
+      Regla de Power BI: ticket con correo válido (sin <i>be@</i>, <i>ecommerce@</i>, <i>xxx@</i>, <i>@forus</i>) y
+      RUC menor a 99999991. Regla de respaldo (si no hay tabla con correo): ticket con RUC/DNI no genérico.</p></div>""")
+    intentos = df_all.attrs.get("fidelizacion_intentos", [])
+    if intentos:
+        filas = "".join(
+            f"<tr><td><b>{i['tabla']}</b></td><td class='{'pos' if i['estado'] == 'en uso' else 'neg'}'>{i['estado']}</td>"
+            f"<td><small>{', '.join(f'{k}: {v}' for k, v in i.get('columnas', {}).items()) or '–'}</small></td>"
+            f"<td>{_rango(i)}</td></tr>"
+            for i in intentos)
+        html(f"""<div class="std-wrap interior"><table class="std"><thead><tr><th>TABLA PROBADA</th><th>RESULTADO</th>
+          <th>COLUMNAS USADAS</th><th>FECHAS</th></tr></thead><tbody>{filas}</tbody></table></div>""")
+    d = df_all.copy()
+    if "fid_ruc" not in d:
+        d["fid_ruc"], d["con_bi"] = d["tickets_fidelizados"], False
+    t = d.groupby(["tienda", "casa"], as_index=False).agg(
+        tickets=("tickets", "sum"), fidelizados=("tickets_fidelizados", "sum"), fid_ruc=("fid_ruc", "sum"),
+        dias=("fecha", "nunique"), dias_bi=("con_bi", "sum"))
+    t["% fidelización (app)"] = t["fidelizados"] / t["tickets"].replace(0, np.nan)
+    t["% regla RUC"] = t["fid_ruc"] / t["tickets"].replace(0, np.nan)
+    t["días con regla Power BI"] = t["dias_bi"].astype(int).astype(str) + " de " + t["dias"].astype(str)
+    t = t.sort_values(["casa", "tienda"])[["casa", "tienda", "tickets", "% fidelización (app)", "% regla RUC",
+                                          "días con regla Power BI"]]
+    html('<div class="card-h">Fidelización por tienda (todo el periodo)</div>')
+    st.dataframe(t, hide_index=True, use_container_width=True,
+                 column_config={"% fidelización (app)": st.column_config.NumberColumn(format="percent"),
+                                "% regla RUC": st.column_config.NumberColumn(format="percent")})
+    st.download_button("⬇️ Descargar para comparar con Power BI (CSV)", t.to_csv(index=False).encode("utf-8"),
+                       "fidelizacion_por_tienda.csv", "text/csv")
+
+
 # ---------- Pantalla ----------
 st.session_state["ultima_carga"] = time.time()
 auto_actualizar()
 barra_superior(st.session_state.get("casa") if st.session_state.get("casa") in CASAS
                and st.session_state.get("nav", "Posiciones") == "Posiciones" else None)
 interruptor_simulacion()
-vista = selector("Sección", ["Posiciones", "Competencias", "Calendario", "Reglas"], "nav")
+# La vista de diagnóstico solo aparece con el link ?diagnostico=1 (para quien revisa los datos)
+secciones = ["Posiciones", "Competencias", "Calendario", "Reglas"]
+if st.query_params.get("diagnostico") == "1":
+    secciones.append("Diagnóstico")
+vista = selector("Sección", secciones, "nav")
 if vista == "Posiciones":
     vista_posiciones()
 elif vista == "Competencias":
@@ -499,6 +547,8 @@ elif vista == "Competencias":
     vista_competencias()
 elif vista == "Calendario":
     vista_calendario()
+elif vista == "Diagnóstico":
+    vista_diagnostico()
 else:
     vista_reglas()
 pie()
