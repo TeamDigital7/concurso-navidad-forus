@@ -376,8 +376,7 @@ def descarga_detalle(rank: pd.DataFrame, desde: date, hasta: date, clase: str):
 def vista_posiciones():
     c_main, c_side = st.columns([2.3, 1], gap="large")
     with c_main:
-        aviso_simulacion()
-        desde, hasta = filtro_fechas()
+        desde, hasta = filtro_fechas()  # en el lugar de la profecía
         f = df_all["fecha"].dt.date
         d_rango = df_all[(f >= desde) & (f <= hasta)]
         pt_rango = puntos_en_rango(desde, hasta)
