@@ -89,6 +89,15 @@ columna `fid_pendiente`): nadie gana ni pierde el bonus por un dato que todavía
 **Para cuadrar con Power BI**: abrir la app con `?diagnostico=1` (pestaña Diagnóstico). Muestra qué
 tabla se usó y por qué se descartaron las otras, y el % por tienda con las dos reglas, descargable.
 
+## Filtro de fechas y descarga
+
+En Posiciones se elige **Todo**, **Hoy**, **Últimos 7 días** o **📅 Elegir** (rango libre), contados
+desde el último día con venta. El Canal Retail y la tabla usan solo esos días; los puntos son los de
+los tramos que empiezan y cierran dentro del rango. Debajo del Canal Retail (en PC y en celular) se
+descarga un Excel con esas fechas: hoja **Acumulado** con todos los magos y una hoja por casa, sin
+premios. El % de cumplimiento del Retail sale en verde desde el 95% (desde ahí se paga) y en rojo
+debajo.
+
 ## En vivo
 
 La app se refresca sola cada 10 minutos (`data.ACTUALIZAR_CADA_MIN`) y muestra arriba la hora de
