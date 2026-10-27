@@ -71,9 +71,11 @@ Sin secrets la app usa datos de ejemplo.
 
 ## Fidelización (regla de Power BI)
 
-Un ticket es fidelizado si el cliente dejó un correo real, igual que la medida "Registro Válido":
-`ruc_cliente` numérico ≥ 99999991 no cuenta (RUC de empresa y genéricos); tampoco correos que
-empiezan con `be@` o contienen `ecommerce@`, `xxx@` o `@forus`; y el correo debe tener `@`.
+Un ticket es fidelizado solo si tiene **correo válido y RUC/DNI válido** (medida "Registro
+Válido"): el correo debe tener `@` y no empezar con `be@` ni contener `ecommerce@`, `xxx@` o
+`@forus`; el RUC/DNI no puede estar vacío ni ser solo ceros, y si es numérico debe ser menor a
+99999991 (RUC de empresa y genéricos no cuentan). Un documento no numérico (carné de extranjería,
+pasaporte) cuenta como válido.
 
 El correo sale de la primera tabla que lo tenga con ventas en el periodo, en este orden:
 `fidelizacion_table` (secrets), `ventas_table` si es una ventas_bi, la tabla de venta si trae

@@ -410,7 +410,7 @@ def como_se_ganan_puntos():
         <th class="n">PUNTOS</th></tr></thead><tbody>
         <tr><td><b>Puntos por venta</b></td><td>Venta ≥ presupuesto (cumplimiento ≥ 100%)</td>
           <td class="n pts">{min(t.puntos for t in TRAMOS)} a {max(t.puntos for t in TRAMOS)}</td></tr>
-        <tr><td><b>Bonus fidelización</b></td><td>Más del {BONUS_FIDELIZACION['umbral']:.0%} de tickets con cliente válido</td>
+        <tr><td><b>Bonus fidelización</b></td><td>Más del {BONUS_FIDELIZACION['umbral']:.0%} de tickets con correo y RUC/DNI válidos</td>
           <td class="n pts">+{BONUS_FIDELIZACION['puntos']}</td></tr>
         <tr><td><b>Bonus SSS</b></td><td>Crecer más de {BONUS_SSS['umbral']:.0%} vs. el año pasado (mismo día de la semana,
           solo días con venta en los dos años)</td><td class="n pts">+{BONUS_SSS['puntos']}</td></tr>
@@ -499,8 +499,9 @@ def vista_diagnostico():
     html(f"""<div class="card"><div class="card-h">Fidelización · de dónde sale</div>
       <p class="reglas-p">{"✅" if regla_bi else "⚠️"} {aviso}</p>
       <p class="reglas-p">Ventas del {real[0]:%d/%m/%Y} al {real[1]:%d/%m/%Y}{" (simulación)" if simulacion else ""}.
-      Regla de Power BI: ticket con correo válido (sin <i>be@</i>, <i>ecommerce@</i>, <i>xxx@</i>, <i>@forus</i>) y
-      RUC menor a 99999991. Regla de respaldo (si no hay tabla con correo): ticket con RUC/DNI no genérico.</p></div>""")
+      Regla de Power BI: el ticket cuenta solo si tiene <b>correo válido</b> (con @, sin <i>be@</i>, <i>ecommerce@</i>,
+      <i>xxx@</i> ni <i>@forus</i>) <b>y RUC/DNI válido</b> (no vacío, no solo ceros y menor a 99999991). Regla de
+      respaldo (días sin tabla con correo): solo el RUC/DNI válido.</p></div>""")
     intentos = df_all.attrs.get("fidelizacion_intentos", [])
     if intentos:
         filas = "".join(
