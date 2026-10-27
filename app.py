@@ -97,7 +97,7 @@ ayer = (datetime.now(ZoneInfo("America/Lima")) - timedelta(days=1)).date()
 cierre = corte if simulacion else min(corte, ayer)
 pt_all = puntos_por_tramo(df_all, hasta=cierre)
 rank_all = ranking(pt_all)
-casas = resumen_casas(rank_all)
+casas = resumen_casas(rank_all)  # solo para ordenar las casas en Competencias
 comp_actual = next((c for c in COMPETENCIAS if c.inicio <= corte <= c.fin), COMPETENCIAS[-1])
 
 # ---------- Utilidades ----------
@@ -229,53 +229,37 @@ def tabla_posiciones(r: pd.DataFrame, corte_premio: int | None = None,
         <span class="n">PTS</span><span class="n">% PPTO</span></div>{tarjetas}</div></div>"""
 
 
-def relojes_casas() -> str:
-    """Los relojes de arena de la Copa de las Casas: las gemas suben con los puntos de cada casa."""
-    tope = max(casas["puntos"].max(), 1)
-    relojes = "".join(f"""<div class="reloj" style="--c:{_color(r['casa'])}; --h:{max(r['puntos'] / tope, .04):.0%}">
-        <div class="tubo"><div class="gemas"></div></div><img src="{escudo(r['casa'])}" alt="{r['casa']}">
-        <b>{int(r['puntos']):,}</b></div>""" for _, r in casas.iterrows())
-    return f'<div class="relojes">{relojes}</div>'
+PAGA_DESDE = RANGO_PAGO[0][0]
 
 
-def panel_casas(clase: str = ""):
-    """Las 5 casas en una tarjeta, como el 'Who to follow' de X, con sus relojes de arena."""
-    filas = ""
-    for i, r in casas.iterrows():
-        filas += f"""<div class="pc-row" style="--c:{_color(r['casa'])}">
-          <span class="pc-pos">{i + 1}</span><img src="{escudo(r['casa'])}" alt="">
-          <div class="pc-nom"><b>{r['casa']}</b><small>{_pct(r['cumplimiento'])} ppto · SSS {_pct(r['sss'], True)}</small></div>
-          <div class="pc-pts">{int(r['puntos']):,}<small>{r['puntos_prom']:.0f} x mago</small></div></div>"""
-    html(f'<div class="card {clase}"><div class="card-h">Copa de las Casas</div>{relojes_casas()}{filas}</div>')
-
-
-def panel_retail(clase: str = ""):
-    venta, ppto, ly = df_all["venta"].sum(), df_all["presupuesto"].sum(), df_all["venta_ly"].sum()
+def panel_retail(d: pd.DataFrame, clase: str = ""):
+    """Canal Retail de los días elegidos en el filtro de fechas."""
+    venta, ppto, ly = d["venta"].sum(), d["presupuesto"].sum(), d["venta_ly"].sum()
     cumpl = venta / ppto if ppto else 0.0
-    sss = df_all["venta"].where(df_all["venta_ly"] > 0, 0).sum() / ly - 1 if ly else 0.0  # días comparables
+    sss = d["venta"].where(d["venta_ly"] > 0, 0).sum() / ly - 1 if ly else 0.0  # días comparables
     meta_sss = DESAFIOS_SSS.get(corte.month, 0)
-    fid = df_all["tickets_fidelizados"].sum() / max(df_all["tickets"].sum(), 1)
+    fid = d["tickets_fidelizados"].sum() / max(d["tickets"].sum(), 1)
     f = factor_pago(cumpl)
+    # Cumplimiento y "Se paga": verde desde el 95%, que es desde donde se paga el premio; rojo debajo
+    paga = "pos" if cumpl >= PAGA_DESDE else "neg"
     tiles = [
-        ("Cumplimiento", f"{cumpl:.1%}", cumpl >= 1, "vs. presupuesto"),
-        ("Se paga", f"{f:.0%}", f >= 1, "del premio"),
-        ("SSS", f"{sss:+.1%}", sss >= meta_sss, f"meta +{meta_sss:.0%}"),
-        ("Fidelización", f"{fid:.0%}", fid > BONUS_FIDELIZACION["umbral"],
+        ("Cumplimiento", _pct(cumpl, dec=1), paga, f"se paga desde {PAGA_DESDE:.0%}"),
+        ("Se paga", f"{f:.0%}", paga, "del premio"),
+        ("SSS", _pct(sss, True, 1), "pos" if sss >= meta_sss else "", f"meta +{meta_sss:.0%}"),
+        ("Fidelización", _pct(fid), "pos" if fid > BONUS_FIDELIZACION["umbral"] else "",
          f"bonus sobre {BONUS_FIDELIZACION['umbral']:.0%}"),
     ]
-    cuerpo = "".join(f'<div class="tile"><span>{l}</span><b class="{"pos" if ok else ""}">{v}</b><small>{s}</small></div>'
-                     for l, v, ok, s in tiles)
+    cuerpo = "".join(f'<div class="tile"><span>{l}</span><b class="{c}">{v}</b><small>{s}</small></div>'
+                     for l, v, c, s in tiles)
     html(f'<div class="card {clase}"><div class="card-h">Canal Retail</div><div class="tiles">{cuerpo}</div></div>')
 
 
 def cabecera_casa(casa: str, r: pd.DataFrame):
-    res = casas.set_index("casa").loc[casa]
-    puesto = int(casas.index[casas["casa"] == casa][0]) + 1
+    res = resumen_casas(r).set_index("casa").loc[casa]
     html(f"""<div class="casa-head" style="--c:{_color(casa)}">
       <img src="{escudo(casa, 256)}" alt="{casa}">
-      <div><b>Casa {casa}</b><small>{CASAS[casa]['animal']} · {len(r)} magos · #{puesto} de {len(casas)}</small></div>
-      <div class="ch-stats"><div><b>{int(res['puntos']):,}</b><span>puntos</span></div>
-        <div><b>{_pct(res['cumplimiento'])}</b><span>% ppto</span></div>
+      <div><b>Casa {casa}</b><small>{CASAS[casa]['animal']} · {len(r)} magos</small></div>
+      <div class="ch-stats"><div><b>{_pct(res['cumplimiento'])}</b><span>% ppto</span></div>
         <div><b>{_pct(res['sss'], True)}</b><span>SSS</span></div></div>
     </div>""")
 
@@ -309,17 +293,103 @@ def selector_periodo() -> str:
                         label_visibility="collapsed")
 
 
+RANGOS = ["Todo", "Hoy", "Últimos 7 días", "📅 Elegir"]
+
+
+def filtro_fechas() -> tuple[date, date]:
+    """Hoy / últimos 7 días / personalizado, contados desde el último día con venta."""
+    primero = df_all["fecha"].min().date()
+    opcion = selector("Fechas", RANGOS, "rango")
+    if opcion == "Hoy":
+        desde, hasta = corte, corte
+    elif opcion == "Últimos 7 días":
+        desde, hasta = max(corte - timedelta(days=6), primero), corte
+    elif opcion == "📅 Elegir":
+        sel = st.date_input("Del … al …", value=(max(corte - timedelta(days=6), primero), corte),
+                            min_value=primero, max_value=corte, format="DD/MM/YYYY", key="rango_fechas",
+                            label_visibility="collapsed")
+        desde, hasta = (sel[0], sel[-1]) if sel else (primero, corte)  # mientras elige: 1 sola fecha
+    else:
+        desde, hasta = primero, corte
+    if opcion != "Todo":
+        html(f'<div class="nota">Del {desde:%d/%m} al {hasta:%d/%m}. Los puntos son los de los tramos que '
+             f'empiezan y cierran dentro de esas fechas.</div>')
+    return desde, hasta
+
+
+def puntos_en_rango(desde: date, hasta: date) -> pd.DataFrame:
+    """Tramos con la venta de los días elegidos; solo puntúan los que quedan completos dentro del rango."""
+    if (desde, hasta) == (df_all["fecha"].min().date(), corte):
+        return pt_all
+    f = df_all["fecha"].dt.date
+    pt = puntos_por_tramo(df_all[(f >= desde) & (f <= hasta)], hasta=cierre)
+    parcial = (pt["inicio"] < desde) | (pt["fin"] > hasta)
+    pt.loc[parcial, ["pts_venta", "pts_fidelizacion", "pts_sss", "pts_bonus", "puntos"]] = 0
+    return pt
+
+
+COLUMNAS_EXCEL = {
+    "puesto": "Puesto", "tienda": "Tienda", "casa": "Casa", "puntos": "Puntos", "pts_venta": "Puntos por venta",
+    "pts_bonus": "Puntos bonus", "tramos_ganados": "Tramos ganados", "venta": "Venta S/",
+    "presupuesto": "Presupuesto S/", "cumplimiento": "% Presupuesto", "venta_ly": "Venta año pasado S/",
+    "sss": "SSS", "tickets": "Tickets", "tickets_fidelizados": "Tickets fidelizados",
+    "fidelizacion": "% Fidelización", "ticket_prom": "Ticket promedio S/", "upt": "Unidades por ticket",
+}
+
+
+def excel_detalle(rank: pd.DataFrame, desde: date, hasta: date) -> bytes:
+    """Hoja 'Acumulado' con todos los magos y una hoja por casa con sus tiendas (sin premios)."""
+    import io
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as xl:
+        hojas = [("Acumulado", rank)] + [(c, rank[rank["casa"] == c]) for c in CASAS]
+        for nombre, r in hojas:
+            t = r.reset_index(drop=True).assign(puesto=lambda x: range(1, len(x) + 1))
+            t = t[list(COLUMNAS_EXCEL)].rename(columns=COLUMNAS_EXCEL)
+            t.to_excel(xl, sheet_name=nombre, index=False, startrow=2)
+            ws = xl.sheets[nombre]
+            ws["A1"] = (f"Forus y el Cáliz de los Campeones · {nombre} · del {desde:%d/%m/%Y} al {hasta:%d/%m/%Y}"
+                        + (" · simulación" if simulacion else ""))
+            ws.freeze_panes = "C4"
+            for i, col in enumerate(t.columns, start=1):
+                letra = ws.cell(row=3, column=i).column_letter
+                largo = t[col].astype(str).str.len().max() if len(t) else 0
+                ws.column_dimensions[letra].width = max(12, min(34, max(len(col), largo) + 2))
+                formato = ("0.0%" if col.startswith("%") or col == "SSS" else "#,##0" if col.endswith("S/") or
+                           col in ("Tickets", "Tickets fidelizados") else "0.00" if col == "Unidades por ticket" else None)
+                if formato:
+                    for celda in ws[letra][3:]:
+                        celda.number_format = formato
+    return buf.getvalue()
+
+
+def descarga_detalle(rank: pd.DataFrame, desde: date, hasta: date, clase: str):
+    # La clave termina en _solo-movil / _solo-pc: el CSS la muestra solo en ese dispositivo
+    st.download_button("⬇️ Descargar detalle en Excel",
+                       excel_detalle(rank, desde, hasta),
+                       f"Forus-Caliz-detalle-{desde:%d%m}-al-{hasta:%d%m}.xlsx",
+                       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                       width="stretch", key=f"descarga_{clase}",
+                       help="Hoja Acumulado con todos los magos y una hoja por casa, con las fechas elegidas.")
+
+
 def vista_posiciones():
     c_main, c_side = st.columns([2.3, 1], gap="large")
     with c_main:
         aviso_simulacion()
-        # Celular: Canal Retail arriba, luego la tabla y las casas al final (en PC van a la derecha)
-        panel_retail("solo-movil")
+        desde, hasta = filtro_fechas()
+        f = df_all["fecha"].dt.date
+        d_rango = df_all[(f >= desde) & (f <= hasta)]
+        pt_rango = puntos_en_rango(desde, hasta)
+        rank_rango = ranking(pt_rango)
+        # Celular: Canal Retail y la descarga arriba, luego la tabla (en PC van a la derecha)
+        panel_retail(d_rango, "solo-movil")
+        descarga_detalle(rank_rango, desde, hasta, "solo-movil")
         periodo = selector_periodo()
         casa = selector("Casa", ["Todas"] + list(CASAS), "casa")
         casa = None if casa == "Todas" else casa
         zona = periodo != ACUMULADO
-        base = ranking(pt_all[pt_all["competencia"] == periodo]) if zona else rank_all
+        base = ranking(pt_rango[pt_rango["competencia"] == periodo]) if zona else rank_rango
         r = con_puesto(base[base["casa"] == casa].reset_index(drop=True) if casa else base)
         if casa:
             cabecera_casa(casa, r)
@@ -338,11 +408,9 @@ def vista_posiciones():
                 f"{periodo}: ganan los 5 primeros de cada casa (elige una casa para ver el corte)." if zona else
                 "Copa del Mejor Mago: puntos sumando todas las competencias.")
         html(f'<div class="nota">{nota} PTS = puntos · % PPTO = venta vs. presupuesto.</div>')
-        if not casa:
-            panel_casas("solo-movil")
     with c_side:
-        panel_casas("solo-pc")
-        panel_retail("solo-pc")
+        panel_retail(d_rango, "solo-pc")
+        descarga_detalle(rank_rango, desde, hasta, "solo-pc")
 
 
 def vista_competencias():
@@ -356,7 +424,8 @@ def vista_competencias():
         estado += " (simulación)"
     html(f"""<div class="card comp"><div><span><b>{comp.nombre}</b> <span class="chip">{estado}</span></span>
       <small>{comp.inicio:%d/%m} al {comp.fin:%d/%m} · pago {comp.pago:%d/%m}</small></div>
-      <div class="comp-pago"><b>{f:.0%}</b><small>se paga · Retail {cumpl:.1%}</small></div></div>""")
+      <div class="comp-pago"><b class="{"pos" if cumpl >= PAGA_DESDE else "neg"}">{_pct(cumpl, dec=1)}</b>
+        <small>cumplimiento Retail · se paga a partir del {PAGA_DESDE:.0%}{f" · hoy paga el {f:.0%}" if f else ""}</small></div></div>""")
     if top.empty:
         st.info("Esta competencia todavía no tiene ventas.")
         return
@@ -445,8 +514,6 @@ def como_se_ganan_puntos():
         puntos de cada casa</b>. Empate: gana el de mejor % de cumplimiento.</li>
       <li><b>Copa del Mejor Mago:</b> el acumulado de todas las competencias (máximo
         {pts_tramos + bonus_tramo * len(TRAMOS)} puntos). Es la vista «Torneo completo · acumulado».</li>
-      <li><b>Copa de las Casas:</b> la suma de los puntos de todos los magos de la casa (los relojes de arena). Como las
-        casas tienen distinta cantidad de tiendas, también se muestra el promedio por mago.</li>
       <li>Los part time reciben el {FACTOR_PART_TIME:.0%} del premio.</li></ul>
       <div class="card-h">¿Cuánto del premio se paga?</div>
       <p class="reglas-p">Depende del cumplimiento de <b>todo el canal Retail</b> en la competencia (el «Se paga» de la app).
