@@ -16,6 +16,7 @@ from concurso import (CASAS, COMPETENCIAS, DESAFIOS_SSS, FACTOR_PART_TIME, GANAD
                       TRAMOS, BONUS_FIDELIZACION, BONUS_SSS)
 from data import ACTUALIZAR_CADA_MIN, SIM_DESFASE, cargar_datos, cargar_simulacion
 from puntos import factor_pago, ganadores, puntos_por_tramo, ranking, resumen_casas
+from reporte import excel_concurso
 
 st.set_page_config(page_title="Forus y el Cáliz de los Campeones", page_icon="🏆", layout="wide",
                    initial_sidebar_state="collapsed")
@@ -31,8 +32,16 @@ def html(s: str):
     st.markdown(" ".join(line.strip() for line in s.splitlines()), unsafe_allow_html=True)
 
 
+STATIC = ROOT / "static"
+
+
 @cache
 def img_uri(nombre: str) -> str:
+    """URL de una imagen. Las de static/ se sirven como archivo (enableStaticServing): el navegador las
+    guarda y no viajan en cada recarga. Antes iban dentro del HTML y cada escudo se repetía 180 veces
+    en Posiciones (~1,6 MB por cambio de pestaña). Las de assets/ (banda.jpg, caliz.png) van embebidas."""
+    if (STATIC / nombre).exists():
+        return f"app/static/{nombre}"
     p = ASSETS / nombre
     if not p.exists():
         return ""
@@ -41,7 +50,7 @@ def img_uri(nombre: str) -> str:
 
 
 def escudo(casa: str, px: int = 96) -> str:
-    """Escudo recortado y cuadrado (assets/escudos/mini), liviano para repetirlo en cada fila."""
+    """Escudo recortado y cuadrado (static/escudos/mini), liviano para repetirlo en cada fila."""
     return img_uri(f"escudos/mini/{CASAS[casa]['escudo'].rsplit('.', 1)[0]}-{px}.webp")
 
 
@@ -95,8 +104,27 @@ corte = df_all["fecha"].max().date()
 # simulación todos los días ya pasaron.
 ayer = (datetime.now(ZoneInfo("America/Lima")) - timedelta(days=1)).date()
 cierre = corte if simulacion else min(corte, ayer)
-pt_all = puntos_por_tramo(df_all, hasta=cierre)
-rank_all = ranking(pt_all)
+
+
+@st.cache_data(show_spinner=False, max_entries=16)
+def calcular_puntos(df: pd.DataFrame, hasta: date, desde_rango: date | None = None,
+                    hasta_rango: date | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Puntos por tramo y ranking, en caché: cambiar de pestaña no los vuelve a calcular.
+
+    Con un rango de fechas, cada tramo se mide con los días elegidos y solo puntúan los que quedan
+    completos dentro del rango.
+    """
+    if desde_rango is None:
+        pt = puntos_por_tramo(df, hasta=hasta)
+    else:
+        f = df["fecha"].dt.date
+        pt = puntos_por_tramo(df[(f >= desde_rango) & (f <= hasta_rango)], hasta=hasta)
+        parcial = (pt["inicio"] < desde_rango) | (pt["fin"] > hasta_rango)
+        pt.loc[parcial, ["pts_venta", "pts_fidelizacion", "pts_sss", "pts_bonus", "puntos"]] = 0
+    return pt, ranking(pt)
+
+
+pt_all, rank_all = calcular_puntos(df_all, cierre)
 casas = resumen_casas(rank_all)  # solo para ordenar las casas en Competencias
 comp_actual = next((c for c in COMPETENCIAS if c.inicio <= corte <= c.fin), COMPETENCIAS[-1])
 
@@ -305,10 +333,14 @@ def filtro_fechas() -> tuple[date, date]:
     elif opcion == "Últimos 7 días":
         desde, hasta = max(corte - timedelta(days=6), primero), corte
     elif opcion == "📅 Elegir":
-        sel = st.date_input("Del … al …", value=(max(corte - timedelta(days=6), primero), corte),
-                            min_value=primero, max_value=corte, format="DD/MM/YYYY", key="rango_fechas",
-                            label_visibility="collapsed")
-        desde, hasta = (sel[0], sel[-1]) if sel else (primero, corte)  # mientras elige: 1 sola fecha
+        # Dos calendarios (desde / hasta): con uno de rango no se podía elegir un solo día
+        c1, c2 = st.columns(2)
+        desde = c1.date_input("Desde", value=max(corte - timedelta(days=6), primero), min_value=primero,
+                              max_value=corte, format="DD/MM/YYYY", key="fecha_desde")
+        hasta = c2.date_input("Hasta", value=corte, min_value=primero, max_value=corte, format="DD/MM/YYYY",
+                              key="fecha_hasta")
+        if hasta < desde:
+            desde, hasta = hasta, desde
     else:
         desde, hasta = primero, corte
     if opcion != "Todo":
@@ -317,60 +349,35 @@ def filtro_fechas() -> tuple[date, date]:
     return desde, hasta
 
 
-def puntos_en_rango(desde: date, hasta: date) -> pd.DataFrame:
-    """Tramos con la venta de los días elegidos; solo puntúan los que quedan completos dentro del rango."""
+def puntos_en_rango(desde: date, hasta: date) -> tuple[pd.DataFrame, pd.DataFrame]:
     if (desde, hasta) == (df_all["fecha"].min().date(), corte):
-        return pt_all
-    f = df_all["fecha"].dt.date
-    pt = puntos_por_tramo(df_all[(f >= desde) & (f <= hasta)], hasta=cierre)
-    parcial = (pt["inicio"] < desde) | (pt["fin"] > hasta)
-    pt.loc[parcial, ["pts_venta", "pts_fidelizacion", "pts_sss", "pts_bonus", "puntos"]] = 0
-    return pt
+        return pt_all, rank_all
+    return calcular_puntos(df_all, cierre, desde, hasta)
 
 
-COLUMNAS_EXCEL = {
-    "puesto": "Puesto", "tienda": "Tienda", "casa": "Casa", "puntos": "Puntos", "pts_venta": "Puntos por venta",
-    "pts_bonus": "Puntos bonus", "tramos_ganados": "Tramos ganados", "venta": "Venta S/",
-    "presupuesto": "Presupuesto S/", "cumplimiento": "% Presupuesto", "venta_ly": "Venta año pasado S/",
-    "sss": "SSS", "tickets": "Tickets", "tickets_fidelizados": "Tickets fidelizados",
-    "fidelizacion": "% Fidelización", "ticket_prom": "Ticket promedio S/", "upt": "Unidades por ticket",
-}
+def estado_competencias() -> list[dict]:
+    """Para el Dashboard del Excel: cumplimiento del canal en cada competencia (todo su periodo)."""
+    res = []
+    for c in COMPETENCIAS:
+        d = df_all[(df_all["fecha"].dt.date >= c.inicio) & (df_all["fecha"].dt.date <= c.fin)]
+        ppto = d["presupuesto"].sum()
+        cumpl = d["venta"].sum() / ppto if ppto else None
+        res.append({"nombre": c.nombre, "inicio": c.inicio, "fin": c.fin, "cumplimiento": cumpl,
+                    "factor": factor_pago(cumpl) if cumpl is not None else 0,
+                    "estado": "Cerrada" if cierre >= c.fin else ("En curso" if corte >= c.inicio else "Por iniciar")})
+    return res
 
 
-def excel_detalle(rank: pd.DataFrame, desde: date, hasta: date) -> bytes:
-    """Hoja 'Acumulado' con todos los magos y una hoja por casa con sus tiendas (sin premios)."""
-    import io
-    buf = io.BytesIO()
-    with pd.ExcelWriter(buf, engine="openpyxl") as xl:
-        hojas = [("Acumulado", rank)] + [(c, rank[rank["casa"] == c]) for c in CASAS]
-        for nombre, r in hojas:
-            t = r.reset_index(drop=True).assign(puesto=lambda x: range(1, len(x) + 1))
-            t = t[list(COLUMNAS_EXCEL)].rename(columns=COLUMNAS_EXCEL)
-            t.to_excel(xl, sheet_name=nombre, index=False, startrow=2)
-            ws = xl.sheets[nombre]
-            ws["A1"] = (f"Forus y el Cáliz de los Campeones · {nombre} · del {desde:%d/%m/%Y} al {hasta:%d/%m/%Y}"
-                        + (" · simulación" if simulacion else ""))
-            ws.freeze_panes = "C4"
-            for i, col in enumerate(t.columns, start=1):
-                letra = ws.cell(row=3, column=i).column_letter
-                largo = t[col].astype(str).str.len().max() if len(t) else 0
-                ws.column_dimensions[letra].width = max(12, min(34, max(len(col), largo) + 2))
-                formato = ("0.0%" if col.startswith("%") or col == "SSS" else "#,##0" if col.endswith("S/") or
-                           col in ("Tickets", "Tickets fidelizados") else "0.00" if col == "Unidades por ticket" else None)
-                if formato:
-                    for celda in ws[letra][3:]:
-                        celda.number_format = formato
-    return buf.getvalue()
-
-
-def descarga_detalle(rank: pd.DataFrame, desde: date, hasta: date, clase: str):
+def descarga_detalle(rank: pd.DataFrame, dias: pd.DataFrame, desde: date, hasta: date, clase: str):
     # La clave termina en _solo-movil / _solo-pc: el CSS la muestra solo en ese dispositivo
+    # El Excel se arma recién al tocar el botón (recibe la función): cambiar de pestaña no lo espera
     st.download_button("⬇️ Descargar detalle en Excel",
-                       excel_detalle(rank, desde, hasta),
+                       lambda: excel_concurso(rank, dias, estado_competencias(), desde, hasta, bool(simulacion),
+                                              df_all.attrs.get("consultado")),
                        f"Forus-Caliz-detalle-{desde:%d%m}-al-{hasta:%d%m}.xlsx",
                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                       width="stretch", key=f"descarga_{clase}",
-                       help="Hoja Acumulado con todos los magos y una hoja por casa, con las fechas elegidas.")
+                       width="stretch", key=f"descarga_{clase}", on_click="ignore",
+                       help="Dashboard con los indicadores, hoja Acumulado y una hoja por casa, con las fechas elegidas.")
 
 
 def vista_posiciones():
@@ -379,11 +386,10 @@ def vista_posiciones():
         desde, hasta = filtro_fechas()  # en el lugar de la profecía
         f = df_all["fecha"].dt.date
         d_rango = df_all[(f >= desde) & (f <= hasta)]
-        pt_rango = puntos_en_rango(desde, hasta)
-        rank_rango = ranking(pt_rango)
+        pt_rango, rank_rango = puntos_en_rango(desde, hasta)
         # Celular: Canal Retail y la descarga arriba, luego la tabla (en PC van a la derecha)
         panel_retail(d_rango, "solo-movil")
-        descarga_detalle(rank_rango, desde, hasta, "solo-movil")
+        descarga_detalle(rank_rango, d_rango, desde, hasta, "solo-movil")
         periodo = selector_periodo()
         casa = selector("Casa", ["Todas"] + list(CASAS), "casa")
         casa = None if casa == "Todas" else casa
@@ -409,7 +415,7 @@ def vista_posiciones():
         html(f'<div class="nota">{nota} PTS = puntos · % PPTO = venta vs. presupuesto.</div>')
     with c_side:
         panel_retail(d_rango, "solo-pc")
-        descarga_detalle(rank_rango, desde, hasta, "solo-pc")
+        descarga_detalle(rank_rango, d_rango, desde, hasta, "solo-pc")
 
 
 def vista_competencias():

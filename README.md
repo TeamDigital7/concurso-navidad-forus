@@ -12,7 +12,9 @@ puntos.py                      # cálculo de puntos por tramo, rankings, top 5 p
 data.py                        # fuente de datos: BigQuery (si hay secrets) o datos de ejemplo
 auth.py                        # inicio de sesión con Microsoft Entra ID (st.login)
 assets/style.css               # tema oscuro y dorado
-assets/escudos/*.webp          # escudos de las 5 casas (mini/: recortados, cuadrados, 96 y 256 px)
+assets/escudos/*.webp          # escudos de las 5 casas
+static/escudos/mini/*.webp     # escudos recortados y cuadrados (96 y 256 px), servidos como archivo
+reporte.py                     # Excel descargable: Dashboard, Acumulado y una hoja por casa
 assets/portada.jpg             # portada del PPT
 .streamlit/config.toml         # tema base
 .streamlit/secrets.example.toml# plantilla de secrets (auth Microsoft + BigQuery)
@@ -91,12 +93,25 @@ tabla se usó y por qué se descartaron las otras, y el % por tienda con las dos
 
 ## Filtro de fechas y descarga
 
-En Posiciones se elige **Todo**, **Hoy**, **Últimos 7 días** o **📅 Elegir** (rango libre), contados
-desde el último día con venta. El Canal Retail y la tabla usan solo esos días; los puntos son los de
-los tramos que empiezan y cierran dentro del rango. Debajo del Canal Retail (en PC y en celular) se
-descarga un Excel con esas fechas: hoja **Acumulado** con todos los magos y una hoja por casa, sin
-premios. El % de cumplimiento del Retail sale en verde desde el 95% (desde ahí se paga) y en rojo
-debajo.
+En Posiciones se elige **Todo**, **Hoy**, **Últimos 7 días** o **📅 Elegir** (Desde / Hasta, sirve
+para un solo día), contados desde el último día con venta. El Canal Retail y la tabla usan solo esos
+días; los puntos son los de los tramos que empiezan y cierran dentro del rango.
+
+Debajo del Canal Retail (PC y celular) se descarga el Excel de esas fechas (`reporte.py`), que se
+arma recién al tocar el botón:
+- **Dashboard**: banda del concurso (`assets/excel-banda.jpg`), indicadores del Canal Retail,
+  tabla y gráficos por casa, top 10 y los 10 con menor % de presupuesto, y el estado de cada
+  competencia.
+- **Acumulado** y **una hoja por casa** (con su escudo y color): todos los campos por tienda,
+  colores de cumplimiento, barras de puntos y filtros. Sin premios.
+
+El % de cumplimiento del Retail sale en verde desde el 95% (desde ahí se paga) y en rojo debajo.
+
+## Velocidad
+
+Los escudos y la banda se sirven desde `static/` (`enableStaticServing` en `.streamlit/config.toml`):
+el navegador los guarda y no viajan en cada cambio de pestaña. Los puntos y rankings quedan en caché
+(`calcular_puntos`).
 
 ## En vivo
 

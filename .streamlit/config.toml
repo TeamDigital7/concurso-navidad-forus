@@ -10,6 +10,8 @@ font = "sans serif"
 headless = true
 # Igual que en catalogo-control-center: evita agotar inotify en Streamlit Cloud
 fileWatcherType = "none"
+# Sirve static/ (escudos, banda) como archivos: el navegador los guarda en caché
+enableStaticServing = true
 
 [browser]
 gatherUsageStats = false
