@@ -82,7 +82,9 @@ El correo sale de la primera tabla que lo tenga con ventas en el periodo, en est
 correo, `pe_bronze.stg_pe_perucentral_ventas_bi` y `bronze.stg_pe_central_ventas_bi`. Las columnas
 se detectan solas (o `fidelizacion_col_<campo>` en los secrets) y la fecha se lee aunque venga como
 texto (`2026-10-26`, `26/10/2026` o `20261026`). El % por día y tienda se aplica a los tickets de la
-venta; los días sin dato quedan con la regla por RUC/DNI.
+venta; los días sin dato muestran el % con la regla por RUC/DNI, pero **el bonus de fidelización
+de un tramo no se otorga hasta tener el correo de todos sus días** (`puntos.puntos_por_tramo`,
+columna `fid_pendiente`): nadie gana ni pierde el bonus por un dato que todavía no llegó.
 
 **Para cuadrar con Power BI**: abrir la app con `?diagnostico=1` (pestaña Diagnóstico). Muestra qué
 tabla se usó y por qué se descartaron las otras, y el % por tienda con las dos reglas, descargable.

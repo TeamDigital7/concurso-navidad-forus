@@ -371,6 +371,9 @@ def vista_competencias():
 def vista_calendario():
     hoy = cierre
     filas = ""
+    # Hasta qué día llegó el dato de correo (ventas_bi): el bonus de fidelización de un tramo
+    # cerrado espera a que estén todos sus días
+    con_correo = df_all.loc[df_all["con_bi"].fillna(False).astype(bool), "fecha"] if "con_bi" in df_all else None
     for i, t in enumerate(TRAMOS):
         if t.fin <= hoy:
             estado, cls = "Cerrado", "pos"
@@ -378,14 +381,29 @@ def vista_calendario():
             estado, cls = "En curso", "oro"
         else:
             estado, cls = "Próximo", ""
-        ganan = int((pt_all.loc[pt_all["tramo"] == i, "pts_venta"] > 0).sum()) if t.fin <= hoy else "–"
+        tramo = pt_all[pt_all["tramo"] == i]
+        ganan = int((tramo["pts_venta"] > 0).sum()) if t.fin <= hoy else "–"
+        if t.fin > hoy:
+            fid, fcls = "–", ""
+        elif tramo["fid_pendiente"].any():
+            fid, fcls = "⏳ Falta correo", "oro"
+        else:
+            fid, fcls = f"✓ {int((tramo['pts_fidelizacion'] > 0).sum())} magos", "pos"
         filas += f"""<tr><td>{t.inicio:%d/%m} – {t.fin:%d/%m}</td><td class="n pts">{t.puntos}</td>
-          <td class="{cls}">{estado}</td><td class="n">{ganan}</td></tr>"""
+          <td class="{cls}">{estado}</td><td class="n">{ganan}</td><td class="{fcls}">{fid}</td></tr>"""
+    if con_correo is None:
+        aviso_correo = ""
+    elif con_correo.empty:
+        aviso_correo = " Todavía no hay datos de correo: el bonus de fidelización está en espera."
+    else:
+        aviso_correo = f" Datos de correo cargados hasta el <b>{con_correo.max():%d/%m}</b>."
     html(f"""<div class="std-wrap"><table class="std"><thead><tr><th>TRAMO</th><th class="n">PTS</th>
-      <th>ESTADO</th><th class="n">CUMPLIERON</th></tr></thead><tbody>{filas}</tbody></table></div>
+      <th>ESTADO</th><th class="n">CUMPLIERON</th><th>BONUS FIDELIZ.</th></tr></thead><tbody>{filas}</tbody></table></div>
       <div class="nota">Cumplir venta ≥ presupuesto en el tramo da sus puntos. Bonus por tramo:
       fidelización &gt; {BONUS_FIDELIZACION['umbral']:.0%} +{BONUS_FIDELIZACION['puntos']} · SSS &gt;
-      {BONUS_SSS['umbral']:.0%} +{BONUS_SSS['puntos']}. El 25/12 no tiene tramo.</div>""")
+      {BONUS_SSS['umbral']:.0%} +{BONUS_SSS['puntos']}. El 25/12 no tiene tramo.
+      El bonus de fidelización se otorga cuando están los datos de correo de todos los días del tramo
+      (⏳ = todavía faltan).{aviso_correo}</div>""")
 
 
 def como_se_ganan_puntos():
@@ -410,7 +428,8 @@ def como_se_ganan_puntos():
         <th class="n">PUNTOS</th></tr></thead><tbody>
         <tr><td><b>Puntos por venta</b></td><td>Venta ≥ presupuesto (cumplimiento ≥ 100%)</td>
           <td class="n pts">{min(t.puntos for t in TRAMOS)} a {max(t.puntos for t in TRAMOS)}</td></tr>
-        <tr><td><b>Bonus fidelización</b></td><td>Más del {BONUS_FIDELIZACION['umbral']:.0%} de tickets con correo y RUC/DNI válidos</td>
+        <tr><td><b>Bonus fidelización</b></td><td>Más del {BONUS_FIDELIZACION['umbral']:.0%} de tickets con correo y RUC/DNI válidos.
+          Se otorga cuando están los datos de correo de todos los días del tramo</td>
           <td class="n pts">+{BONUS_FIDELIZACION['puntos']}</td></tr>
         <tr><td><b>Bonus SSS</b></td><td>Crecer más de {BONUS_SSS['umbral']:.0%} vs. el año pasado (mismo día de la semana,
           solo días con venta en los dos años)</td><td class="n pts">+{BONUS_SSS['puntos']}</td></tr>

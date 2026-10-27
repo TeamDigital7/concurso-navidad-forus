@@ -37,8 +37,12 @@ def puntos_por_tramo(df: pd.DataFrame, hasta=None) -> pd.DataFrame:
     # una tienda que el año pasado vendió pocos días (abrió a mitad de mes, remodelación) compara
     # el mes entero contra esos pocos días y el SSS sale inflado (el "vendemos el doble").
     d = d.assign(venta_comp=d["venta"].where(d["venta_ly"] > 0, 0))
+    # Días con tickets que todavía no traen el dato de correo (ventas_bi llega con atraso)
+    con_bi = d["con_bi"].fillna(False).astype(bool) if "con_bi" in d else True
+    d["dias_sin_correo"] = ((d["tickets"] > 0) & ~con_bi).astype(int)
     g = d.groupby(["tienda", "casa", "tramo", "competencia"], as_index=False)[
-        ["venta", "presupuesto", "venta_ly", "venta_comp", "tickets", "tickets_fidelizados", "unidades"]].sum()
+        ["venta", "presupuesto", "venta_ly", "venta_comp", "tickets", "tickets_fidelizados", "unidades",
+         "dias_sin_correo"]].sum()
     g["inicio"] = g["tramo"].map(lambda i: TRAMOS[i].inicio)
     g["fin"] = g["tramo"].map(lambda i: TRAMOS[i].fin)
     g["cerrado"] = True if hasta is None else g["fin"] <= hasta
@@ -47,7 +51,10 @@ def puntos_por_tramo(df: pd.DataFrame, hasta=None) -> pd.DataFrame:
     g["sss"] = sss(g)
     g["fidelizacion"] = g["tickets_fidelizados"] / g["tickets"]
     g["pts_venta"] = np.where(g["cumplimiento"] >= 1, g["tramo"].map(lambda i: TRAMOS[i].puntos), 0)
-    g["pts_fidelizacion"] = np.where(g["fidelizacion"] > BONUS_FIDELIZACION["umbral"],
+    # El bonus de fidelización espera a tener el correo de todos los días del tramo: nadie lo gana
+    # ni lo pierde por un dato que todavía no llegó. Se otorga solo cuando ventas_bi se pone al día.
+    g["fid_pendiente"] = g["dias_sin_correo"] > 0
+    g["pts_fidelizacion"] = np.where((g["fidelizacion"] > BONUS_FIDELIZACION["umbral"]) & ~g["fid_pendiente"],
                                      BONUS_FIDELIZACION["puntos"], 0)
     g["pts_sss"] = np.where(g["sss"] > BONUS_SSS["umbral"], BONUS_SSS["puntos"], 0)
     pts = ["pts_venta", "pts_fidelizacion", "pts_sss"]
