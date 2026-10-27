@@ -75,13 +75,15 @@ Un ticket es fidelizado si el cliente dejó un correo real, igual que la medida 
 `ruc_cliente` numérico ≥ 99999991 no cuenta (RUC de empresa y genéricos); tampoco correos que
 empiezan con `be@` o contienen `ecommerce@`, `xxx@` o `@forus`; y el correo debe tener `@`.
 
-`ft_pe_venta_retail` no trae el correo, así que el % se calcula en la tabla ventas_bi
-(`fidelizacion_table`, o `ventas_table` si apunta a una ventas_bi, o
-`forus-analitica-prod-datalake.bronze.stg_pe_central_ventas_bi`) y se aplica a los tickets de la
-venta. Las columnas se detectan solas; si alguna no se encuentra se fija en los secrets con
-`fidelizacion_col_fecha`, `_tienda`, `_documento`, `_tipo_documento`, `_ruc` o `_correo`.
-Los días que ventas_bi todavía no trae quedan con la regla por RUC. La app muestra arriba qué
-regla está usando o por qué no pudo leer la tabla.
+El correo sale de la primera tabla que lo tenga con ventas en el periodo, en este orden:
+`fidelizacion_table` (secrets), `ventas_table` si es una ventas_bi, la tabla de venta si trae
+correo, `pe_bronze.stg_pe_perucentral_ventas_bi` y `bronze.stg_pe_central_ventas_bi`. Las columnas
+se detectan solas (o `fidelizacion_col_<campo>` en los secrets) y la fecha se lee aunque venga como
+texto (`2026-10-26`, `26/10/2026` o `20261026`). El % por día y tienda se aplica a los tickets de la
+venta; los días sin dato quedan con la regla por RUC/DNI.
+
+**Para cuadrar con Power BI**: abrir la app con `?diagnostico=1` (pestaña Diagnóstico). Muestra qué
+tabla se usó y por qué se descartaron las otras, y el % por tienda con las dos reglas, descargable.
 
 ## En vivo
 
