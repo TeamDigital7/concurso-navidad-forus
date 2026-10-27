@@ -27,9 +27,20 @@ LIMA = ZoneInfo("America/Lima")
 TABLA_VENTA_RETAIL = "forus-analitica-prod-datalake.silver.ft_pe_venta_retail"
 # Documentos de cliente genéricos: un ticket con estos RUT no cuenta como fidelizado.
 CLIENTES_GENERICOS = ("", "0", "00000000", "11111111", "99999999", "999999999")
+RUC_GENERICO_DESDE = 99999991
+
+
+def sql_ruc_valido(col: str) -> str:
+    """RUC/DNI de un cliente real: no vacío, no solo ceros y menor a 99999991 (los genéricos son
+    99999991 en adelante). Un documento no numérico (carné de extranjería, pasaporte) cuenta como
+    válido, igual que en el DAX donde VALUE() falla y vale 0."""
+    r = f"TRIM(IFNULL(CAST({col} AS STRING), ''))"
+    return (f"({r} != '' AND NOT REGEXP_CONTAINS({r}, r'^0+$') "
+            f"AND IFNULL(SAFE_CAST({r} AS BIGNUMERIC), 0) < {RUC_GENERICO_DESDE})")
 
 # Venta diaria por tienda del concurso, este año y el mismo día del año pasado (364 días antes,
-# mismo día de la semana). Un ticket es un nrodoc_lv distinto; fidelizado si trae cliente real.
+# mismo día de la semana). Un ticket es un nrodoc_lv distinto; con RUC válido es la regla de respaldo
+# de fidelización (la de Power BI pide además correo válido y sale de la tabla ventas_bi).
 SQL_VENTA = """
 WITH dia AS (
   SELECT
@@ -37,8 +48,7 @@ WITH dia AS (
     UPPER(TRIM(nombre_tienda)) AS tienda,
     SUM({col_venta}) AS venta,
     COUNT(DISTINCT nrodoc_lv) AS tickets,
-    COUNT(DISTINCT IF(TRIM(IFNULL(CAST(rutcli_lv AS STRING), '')) NOT IN UNNEST(@genericos),
-                      nrodoc_lv, NULL)) AS tickets_fidelizados,
+    COUNT(DISTINCT IF({ruc_valido}, nrodoc_lv, NULL)) AS tickets_fidelizados,
     SUM(unidades_venta) AS unidades
   FROM `{tabla}`
   WHERE DATE(fecmov_lv) BETWEEN DATE_SUB(@inicio, INTERVAL 364 DAY) AND @fin
@@ -66,7 +76,6 @@ TABLAS_BI = [
     "forus-analitica-prod-datalake.pe_bronze.stg_pe_perucentral_ventas_bi",
     "forus-analitica-prod-datalake.bronze.stg_pe_central_ventas_bi",
 ]
-RUC_GENERICO_DESDE = 99999991
 CORREOS_EXCLUIDOS = r"ecommerce@|xxx@|@forus"
 # Nombres posibles de cada columna; se detectan con INFORMATION_SCHEMA (como en ForusIQ) y se
 # pueden fijar en los secrets con fidelizacion_col_<campo> (p. ej. fidelizacion_col_correo).
@@ -84,7 +93,8 @@ ALIAS_BI = {
             "documento_cliente", "nro_documento_cliente"],
     "correo": ["correo_cliente", "email_cliente", "mail_cliente", "correo", "email", "mail"],
 }
-OBLIGATORIAS_BI = ("fecha", "tienda", "documento", "correo")
+# Fidelizado = correo válido Y RUC válido: sin columna de RUC la tabla no sirve
+OBLIGATORIAS_BI = ("fecha", "tienda", "documento", "correo", "ruc")
 
 SQL_FIDELIZACION = """
 SELECT {fecha} AS fecha, UPPER(TRIM(CAST({tienda} AS STRING))) AS clave,
@@ -153,9 +163,7 @@ def sql_fidelizacion(tabla: str, mapa: dict[str, str], columnas: dict[str, str])
         f"NOT REGEXP_CONTAINS({correo}, r'{CORREOS_EXCLUIDOS}')",
         f"STRPOS({correo}, '@') > 0",
     ]
-    if "ruc" in mapa:  # VALUE() que falla cuenta como 0 en el DAX
-        condiciones.insert(0, f"IFNULL(SAFE_CAST(TRIM(CAST(`{mapa['ruc']}` AS STRING)) AS BIGNUMERIC), 0)"
-                              f" < {RUC_GENERICO_DESDE}")
+    condiciones.insert(0, sql_ruc_valido(f"`{mapa['ruc']}`"))
     ticket = f"CAST(`{mapa['documento']}` AS STRING)"
     if "tipo_documento" in mapa:
         ticket = f"CONCAT(IFNULL(CAST(`{mapa['tipo_documento']}` AS STRING), ''), '|', {ticket})"
@@ -233,7 +241,7 @@ def _leer_fidelizacion(client, cfg: dict, bigquery, inicio: date, fin: date,
         fid[c] = pd.to_numeric(fid[c], errors="coerce").astype(float)
     fid = fid.groupby(["fecha", "tienda"], as_index=False)[["tickets_bi", "fidelizados_bi"]].sum()
     intentos[-1]["desde"], intentos[-1]["hasta"] = fid["fecha"].min().date(), fid["fecha"].max().date()
-    return fid, f"Fidelización con la regla de Power BI (correo válido), de `{tabla}` al {fid['fecha'].max():%d/%m}.", intentos
+    return fid, f"Fidelización con la regla de Power BI (correo y RUC válidos), de `{tabla}` al {fid['fecha'].max():%d/%m}.", intentos
 
 
 def aplicar_fidelizacion(venta: pd.DataFrame, fid: pd.DataFrame) -> pd.DataFrame:
@@ -360,6 +368,7 @@ def _leer_bigquery(cfg: dict, inicio: date = INICIO, fin: date = FIN) -> pd.Data
     sql = cfg.get("ventas_query") or SQL_VENTA.format(
         tabla=tabla_venta,
         col_venta=cfg.get("ventas_col_monto", "venta_total_sin_iva"),
+        ruc_valido=sql_ruc_valido("rutcli_lv"),
     )
     venta = client.query(sql, job_config=bigquery.QueryJobConfig(query_parameters=[
         bigquery.ScalarQueryParameter("inicio", "DATE", inicio),
