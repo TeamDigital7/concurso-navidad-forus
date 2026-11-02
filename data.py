@@ -456,7 +456,7 @@ def cargar_simulacion() -> tuple[pd.DataFrame, str, date, date, bool]:
     fechas reales usadas y si el presupuesto es referencial (sin presupuesto cargado para esas
     fechas: venta LY + desafío SSS del mes simulado).
     """
-    fin = min(date.today() - timedelta(days=1), SIM_FIN)
+    fin = min(datetime.now(LIMA).date() - timedelta(days=1), SIM_FIN)
     cfg = config_bigquery()
     df, fuente = ((_leer_bigquery(cfg, SIM_INICIO, fin), "BigQuery") if cfg
                   else (_ejemplo(inicio=SIM_INICIO, fin=fin), "Datos de ejemplo"))

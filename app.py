@@ -79,8 +79,10 @@ def interruptor_simulacion():
                    "semana: el domingo 30/08 cuenta como el domingo 01/11.")
 
 
+# Fecha de Lima (el servidor de Streamlit Cloud está en UTC: a las 19:00 de Lima ya es "mañana")
+hoy = datetime.now(ZoneInfo("America/Lima")).date()
 if "simulacion" not in st.session_state:
-    st.session_state["simulacion"] = date.today() < INICIO or st.query_params.get("simulacion") == "1"
+    st.session_state["simulacion"] = hoy < INICIO or st.query_params.get("simulacion") == "1"
 simulacion = None
 desfase = timedelta(0)
 if st.session_state["simulacion"]:
@@ -91,8 +93,16 @@ else:
     df_all, fuente = cargar_datos()
 if df_all.empty:
     interruptor_simulacion()
-    st.info(f"Fuente: {fuente}. Todavía no hay ventas del concurso (empieza el {INICIO:%d/%m/%Y}). "
-            "Activa la simulación para ver el torneo con la venta real de septiembre y octubre.")
+    if hoy < INICIO:
+        msg = f"Todavía no hay ventas del concurso (empieza el {INICIO:%d/%m/%Y})."
+    else:
+        # El concurso ya empezó pero la tabla de venta todavía no trae ningún día del torneo: la
+        # venta de cada día se carga en BigQuery al día siguiente (D-1).
+        msg = (f"El concurso ya empezó ({INICIO:%d/%m/%Y}), pero la venta todavía no está cargada en "
+               "BigQuery: cada día se carga al día siguiente. La app la toma sola apenas llegue "
+               f"(se actualiza cada {ACTUALIZAR_CADA_MIN} minutos).")
+    st.info(f"Fuente: {fuente}. {msg} "
+            "Mientras tanto, activa la simulación para ver el torneo con la venta real de septiembre y octubre.")
     st.stop()
 if df_all["presupuesto"].sum() == 0:
     st.warning(df_all.attrs.get("presupuesto") or
