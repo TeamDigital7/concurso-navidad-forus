@@ -14,7 +14,7 @@ from auth import auth_configurada, requerir_login, usuario
 from concurso import (CASAS, COMPETENCIAS, DESAFIOS_SSS, FACTOR_PART_TIME, GANADOR_2025, GANADORES_POR_CASA, INICIO,
                       MAESTROS_CC, MAESTROS_TIENDA, NOTAS_TIENDA, PREMIO_CAMPEON, RANGO_PAGO, REGLAMENTO,
                       TRAMOS, BONUS_FIDELIZACION, BONUS_SSS)
-from data import ACTUALIZAR_CADA_MIN, SIM_DESFASE, cargar_datos, cargar_simulacion
+from data import ACTUALIZAR_CADA_MIN, SIM_DESFASE, cargar_datos, cargar_simulacion, diagnostico_venta
 from puntos import factor_pago, ganadores, puntos_por_tramo, ranking, resumen_casas
 from reporte import excel_concurso
 
@@ -103,6 +103,10 @@ if df_all.empty:
                f"(se actualiza cada {ACTUALIZAR_CADA_MIN} minutos).")
     st.info(f"Fuente: {fuente}. {msg} "
             "Mientras tanto, activa la simulación para ver el torneo con la venta real de septiembre y octubre.")
+    if hoy >= INICIO and not simulacion and fuente == "BigQuery":
+        diag = diagnostico_venta()
+        if diag:
+            st.caption(f"🔎 Diagnóstico: {diag}")
     st.stop()
 if df_all["presupuesto"].sum() == 0:
     st.warning(df_all.attrs.get("presupuesto") or

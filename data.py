@@ -440,6 +440,51 @@ def cargar_datos() -> tuple[pd.DataFrame, str]:
     return _normalizar(df), fuente
 
 
+@st.cache_data(ttl=ACTUALIZAR_CADA_MIN * 60 - 30, show_spinner=False)
+def diagnostico_venta() -> str:
+    """Qué tiene la tabla de venta cuando la consulta del concurso vuelve vacía: último día cargado,
+    filas desde el inicio y nombres de tienda que no cruzan con las del concurso."""
+    cfg = config_bigquery()
+    if not cfg:
+        return ""
+    if cfg.get("ventas_query"):
+        return ("Ojo: en los secrets hay una `ventas_query` propia, que reemplaza la consulta a "
+                f"`{cfg.get('ventas_retail_table', TABLA_VENTA_RETAIL)}`.")
+    tabla = cfg.get("ventas_retail_table", TABLA_VENTA_RETAIL)
+    try:
+        from google.cloud import bigquery
+        from google.oauth2 import service_account
+
+        cred = service_account.Credentials.from_service_account_info(dict(st.secrets["gcp_service_account"]))
+        client = bigquery.Client(project=cfg.get("job_project_id") or cfg.get("project_id"),
+                                 credentials=cred, location=cfg.get("location"))
+        params = bigquery.QueryJobConfig(query_parameters=[
+            bigquery.ScalarQueryParameter("inicio", "DATE", INICIO),
+            bigquery.ArrayQueryParameter("tiendas", "STRING", list(TIENDA_A_CASA)),
+        ])
+        r = client.query(f"""
+            SELECT MAX(DATE(fecmov_lv)) AS ultimo_dia, MAX(fecmov_lv) AS ultimo_mov,
+                   COUNTIF(DATE(fecmov_lv) >= @inicio) AS filas,
+                   COUNTIF(DATE(fecmov_lv) >= @inicio
+                           AND UPPER(TRIM(nombre_tienda)) IN UNNEST(@tiendas)) AS filas_tiendas,
+                   ARRAY_AGG(DISTINCT IF(DATE(fecmov_lv) >= @inicio
+                                         AND UPPER(TRIM(nombre_tienda)) NOT IN UNNEST(@tiendas),
+                                         UPPER(TRIM(nombre_tienda)), NULL)
+                             IGNORE NULLS LIMIT 8) AS otras
+            FROM `{tabla}`
+            WHERE DATE(fecmov_lv) >= DATE_SUB(@inicio, INTERVAL 7 DAY)""", job_config=params).result()
+        f = next(iter(r))
+    except Exception as e:  # el diagnóstico nunca debe tumbar la app
+        return f"No se pudo revisar `{tabla}`: {e}"
+    txt = (f"En `{tabla}` el último día con venta es {f.ultimo_dia:%d/%m/%Y} "
+           f"(último movimiento: {f.ultimo_mov}); desde el {INICIO:%d/%m} hay {f.filas:,} filas, "
+           f"{f.filas_tiendas:,} de tiendas del concurso.") if f.ultimo_dia else \
+        f"`{tabla}` no tiene venta en la última semana."
+    if f.otras:
+        txt += " Nombres de tienda que no cruzan: " + ", ".join(f.otras) + "."
+    return txt
+
+
 # Simulación: la venta real de septiembre y octubre jugada como si fuera noviembre y diciembre.
 # Se corre exactamente 9 semanas para que cada día caiga en el mismo día de la semana que en el
 # torneo (lunes vs. lunes): arranca el domingo 30/08 → domingo 01/11 y llega al 29/10 → 31/12.
