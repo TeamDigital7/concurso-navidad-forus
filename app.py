@@ -14,7 +14,8 @@ from auth import auth_configurada, requerir_login, usuario
 from concurso import (CASAS, COMPETENCIAS, DESAFIOS_SSS, FACTOR_PART_TIME, GANADOR_2025, GANADORES_POR_CASA, INICIO,
                       MAESTROS_CC, MAESTROS_TIENDA, NOTAS_TIENDA, PREMIO_CAMPEON, RANGO_PAGO, REGLAMENTO,
                       TRAMOS, BONUS_FIDELIZACION, BONUS_SSS)
-from data import ACTUALIZAR_CADA_MIN, SIM_DESFASE, cargar_datos, cargar_simulacion, diagnostico_venta
+from data import (ACTUALIZAR_CADA_MIN, SIM_DESFASE, cargar_datos, cargar_simulacion, diagnostico_venta,
+                  guardar_venta_ly, leer_archivo_venta_ly, venta_ly_extra)
 from puntos import factor_pago, ganadores, puntos_por_tramo, ranking, resumen_casas
 from reporte import excel_concurso
 
@@ -635,6 +636,50 @@ def vista_diagnostico():
                        "fidelizacion_por_tienda.csv", "text/csv")
 
 
+def vista_carga_ly():
+    """Carga de la venta del año anterior que BigQuery no tiene (Azaleia)."""
+    extra, origen = venta_ly_extra()
+    origen = origen.replace("`", "")
+    col = df_all.attrs.get("col_venta")
+    resumen = (f"Hay {len(extra):,} días-tienda cargados ({extra['tienda'].nunique()} tiendas, del "
+               f"{extra['fecha'].min():%d/%m/%Y} al {extra['fecha'].max():%d/%m/%Y}) en {origen}."
+               if len(extra) else (f"Todavía no hay nada cargado. {origen}" if origen else "Todavía no hay nada cargado."))
+    html(f"""<div class="card"><div class="card-h">Venta del año anterior · carga manual</div>
+      <p class="reglas-p">Para tiendas sin venta del año pasado en BigQuery (Azaleia). Sube un Excel o CSV con
+      una fila por día y tienda: <b>fecha</b> (del año pasado), <b>tienda</b> (como en el concurso, p. ej.
+      AZALEIA JOCKEY PLAZA) y <b>venta</b> <b>bruta</b> (con IGV). Cada día cuenta contra el mismo día de la
+      semana de este año (364 días después): el lunes 03/11/2025 es la venta LY del lunes 02/11/2026. Para la
+      simulación, incluye también septiembre y octubre de 2025. Subir de nuevo los mismos días los reemplaza.</p>
+      <p class="reglas-p">{resumen}{f" Venta de BigQuery: columna <b>{col}</b>." if col else ""}</p></div>""")
+    archivo = st.file_uploader("Archivo de venta del año anterior", type=["xlsx", "xls", "csv"],
+                               key="archivo_ly")
+    if archivo is None:
+        return
+    try:
+        nuevo, desconocidas = leer_archivo_venta_ly(archivo, archivo.name)
+    except Exception as e:
+        st.error(f"No se pudo leer el archivo: {e}")
+        return
+    if desconocidas:
+        st.warning("Estas tiendas no son del concurso y se ignoran: " + ", ".join(desconocidas[:20]))
+    if nuevo.empty:
+        st.error("El archivo no trae filas válidas de tiendas del concurso.")
+        return
+    st.dataframe(nuevo.groupby("tienda", as_index=False).agg(
+        dias=("fecha", "nunique"), desde=("fecha", "min"), hasta=("fecha", "max"), venta_ly=("venta_ly", "sum")),
+        hide_index=True, use_container_width=True,
+        column_config={"venta_ly": st.column_config.NumberColumn("venta LY S/", format="%.0f"),
+                       "desde": st.column_config.DateColumn(format="DD/MM/YYYY"),
+                       "hasta": st.column_config.DateColumn(format="DD/MM/YYYY")})
+    if st.button(f"Guardar {len(nuevo):,} días-tienda", type="primary"):
+        try:
+            st.success(guardar_venta_ly(nuevo) + " Recargando…")
+        except Exception as e:
+            st.error(f"No se pudo guardar: {e}")
+            return
+        st.rerun()
+
+
 # ---------- Pantalla ----------
 st.session_state["ultima_carga"] = time.time()
 auto_actualizar()
@@ -654,6 +699,7 @@ elif vista == "Competencias":
 elif vista == "Calendario":
     vista_calendario()
 elif vista == "Diagnóstico":
+    vista_carga_ly()
     vista_diagnostico()
 else:
     vista_reglas()

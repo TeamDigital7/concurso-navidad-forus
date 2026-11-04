@@ -8,6 +8,8 @@ La consulta debe devolver estas columnas (una fila por tienda y día):
 La `casa` se asigna con concurso.TIENDA_A_CASA (por nombre de tienda).
 """
 from datetime import date, datetime, timedelta
+import unicodedata
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import numpy as np
@@ -357,6 +359,25 @@ def _leer_presupuesto(client, cfg: dict, bigquery, inicio: date, fin: date,
     return ppto, ""
 
 
+# Venta BRUTA (con IGV), como la mide el concurso. Se usa la columna fijada en los secrets
+# (ventas_col_monto) o la primera de esta lista que exista en la tabla.
+COLS_VENTA_BRUTA = ["venta_total_con_iva", "venta_total_con_igv", "venta_con_iva", "venta_con_igv",
+                    "venta_bruta", "venta_total_bruta", "venta_total"]
+
+
+def _col_venta_bruta(client, bigquery, cfg: dict, tabla: str) -> str:
+    fija = str(cfg.get("ventas_col_monto") or "").strip().strip("`")
+    try:
+        columnas = {c.lower(): c for c in _columnas(client, bigquery, tabla)}
+    except Exception:  # sin permiso a INFORMATION_SCHEMA: se confía en la configurada
+        return fija or COLS_VENTA_BRUTA[0]
+    for c in ([fija.lower()] if fija else []) + COLS_VENTA_BRUTA:
+        if c in columnas:
+            return columnas[c]
+    raise RuntimeError(f"`{tabla}` no tiene una columna de venta bruta ({', '.join(COLS_VENTA_BRUTA)}). "
+                       "Fíjala en los secrets con ventas_col_monto.")
+
+
 def _leer_bigquery(cfg: dict, inicio: date = INICIO, fin: date = FIN) -> pd.DataFrame:
     from google.cloud import bigquery
     from google.oauth2 import service_account
@@ -365,9 +386,10 @@ def _leer_bigquery(cfg: dict, inicio: date = INICIO, fin: date = FIN) -> pd.Data
     client = bigquery.Client(project=cfg.get("job_project_id") or cfg.get("project_id"),
                              credentials=cred, location=cfg.get("location"))
     tabla_venta = cfg.get("ventas_retail_table", TABLA_VENTA_RETAIL)
+    col_monto = "" if cfg.get("ventas_query") else _col_venta_bruta(client, bigquery, cfg, tabla_venta)
     sql = cfg.get("ventas_query") or SQL_VENTA.format(
         tabla=tabla_venta,
-        col_venta=cfg.get("ventas_col_monto", "venta_total_sin_iva"),
+        col_venta=col_monto,
         ruc_valido=sql_ruc_valido("rutcli_lv"),
     )
     venta = client.query(sql, job_config=bigquery.QueryJobConfig(query_parameters=[
@@ -394,6 +416,7 @@ def _leer_bigquery(cfg: dict, inicio: date = INICIO, fin: date = FIN) -> pd.Data
     venta.attrs["fidelizacion"] = (aviso, fid is not None)
     venta.attrs["fidelizacion_intentos"] = intentos
     venta.attrs["presupuesto"] = aviso_ppto
+    venta.attrs["col_venta"] = col_monto
     return venta
 
 
@@ -420,6 +443,143 @@ def _ejemplo(seed: int = 7, inicio: date = INICIO, fin: date = FECHA_DEMO) -> pd
     return pd.DataFrame(filas)
 
 
+# ---------- Venta del año anterior cargada a mano (p. ej. Azaleia, sin historia en BigQuery) ----------
+# Archivo con la venta BRUTA por día y tienda de las fechas del año pasado. Cada día cuenta como venta LY
+# del mismo día de la semana 364 días después (igual que el SQL). Se guarda en la tabla de BigQuery
+# `venta_ly_table` de los secrets, si hay; si no, en datos/venta_ly_extra.csv (versionable en el repo).
+VENTA_LY_ARCHIVO = Path(__file__).parent / "datos" / "venta_ly_extra.csv"
+ALIAS_LY = {
+    "fecha": ["fecha", "fecha_venta", "dia", "día", "date", "fecmov_lv"],
+    "tienda": ["tienda", "nombre_tienda", "local", "nombre_local", "store"],
+    "venta": ["venta_bruta", "venta", "venta_total", "venta_con_igv", "venta_con_iva", "monto", "importe",
+              "venta_ly"],
+}
+
+
+def _clave(s: str) -> str:
+    s = unicodedata.normalize("NFKD", str(s)).encode("ascii", "ignore").decode()
+    return " ".join(s.upper().split())
+
+
+_TIENDA_POR_CLAVE = {_clave(t): t for t in TIENDA_A_CASA}
+
+
+def _numero(x: pd.Series) -> pd.Series:
+    """Montos como número, también si vienen como texto ("S/ 1,234.50" o "1.234,50")."""
+    if pd.api.types.is_numeric_dtype(x):
+        return x.astype(float)
+    t = x.astype(str).str.replace(r"[^\d,.\-]", "", regex=True)
+    europeo = t.str.contains(r",\d{1,2}$") & ~t.str.contains(r"\.\d{1,2}$")
+    t = t.where(~europeo, t.str.replace(".", "", regex=False).str.replace(",", ".", regex=False))
+    t = t.where(europeo, t.str.replace(",", "", regex=False))
+    return pd.to_numeric(t, errors="coerce")
+
+
+def _fecha(x: pd.Series) -> pd.Series:
+    """Fechas de Excel (ya son fecha), ISO (2025-11-03) o día/mes/año (03/11/2025)."""
+    if pd.api.types.is_datetime64_any_dtype(x):
+        return x
+    t = x.astype(str).str.strip().str[:10]
+    iso = pd.to_datetime(t, format="%Y-%m-%d", errors="coerce")
+    return iso.fillna(pd.to_datetime(t.where(iso.isna()), dayfirst=True, errors="coerce"))
+
+
+def leer_archivo_venta_ly(archivo, nombre: str) -> tuple[pd.DataFrame, list[str]]:
+    """CSV o Excel → (fecha, tienda, venta_ly) y los nombres de tienda que no son del concurso."""
+    if nombre.lower().endswith((".xlsx", ".xls")):
+        crudo = pd.read_excel(archivo)
+    else:
+        crudo = pd.read_csv(archivo, sep=None, engine="python", encoding="utf-8-sig")
+    cols = {_clave(c).lower().replace(" ", "_"): c for c in crudo.columns}
+    mapa = {campo: next((cols[a] for a in alias if a in cols), None) for campo, alias in ALIAS_LY.items()}
+    faltan = [c for c, col in mapa.items() if col is None]
+    if faltan:
+        raise ValueError(f"Al archivo le faltan las columnas {', '.join(faltan)} "
+                         f"(tiene: {', '.join(map(str, crudo.columns))}).")
+    df = pd.DataFrame({
+        "fecha": _fecha(crudo[mapa["fecha"]]),
+        "clave": crudo[mapa["tienda"]].map(_clave),
+        "venta_ly": _numero(crudo[mapa["venta"]]),
+    })
+    malas = int(df["fecha"].isna().sum() + df["venta_ly"].isna().sum())
+    if malas and malas == len(df):
+        raise ValueError("No se pudo leer ninguna fecha o monto del archivo.")
+    df["tienda"] = df["clave"].map(_TIENDA_POR_CLAVE)
+    desconocidas = sorted(df.loc[df["tienda"].isna(), "clave"].dropna().unique())
+    df = df.dropna(subset=["fecha", "tienda", "venta_ly"])
+    df = df.groupby([df["fecha"].dt.normalize(), "tienda"], as_index=False)["venta_ly"].sum()
+    return df, desconocidas
+
+
+def _cliente_bq(cfg: dict):
+    from google.cloud import bigquery
+    from google.oauth2 import service_account
+
+    cred = service_account.Credentials.from_service_account_info(dict(st.secrets["gcp_service_account"]))
+    return bigquery, bigquery.Client(project=cfg.get("job_project_id") or cfg.get("project_id"),
+                                     credentials=cred, location=cfg.get("location"))
+
+
+@st.cache_data(ttl=ACTUALIZAR_CADA_MIN * 60 - 30, show_spinner=False)
+def venta_ly_extra() -> tuple[pd.DataFrame, str]:
+    """La venta LY cargada a mano y de dónde salió (tabla de BigQuery o archivo del repo)."""
+    vacio = pd.DataFrame(columns=["fecha", "tienda", "venta_ly"])
+    cfg = config_bigquery() or {}
+    tabla = str(cfg.get("venta_ly_table") or "").strip("`")
+    if tabla:
+        try:
+            _, client = _cliente_bq(cfg)
+            df = client.query(f"SELECT fecha, tienda, venta_ly FROM `{tabla}`").to_dataframe()
+            df["fecha"] = pd.to_datetime(df["fecha"])
+            df["venta_ly"] = pd.to_numeric(df["venta_ly"], errors="coerce").astype(float)
+            return df, f"BigQuery `{tabla}`"
+        except Exception as e:
+            if "Not found" not in str(e):
+                return vacio, f"No se pudo leer `{tabla}`: {e}"
+            return vacio, f"BigQuery `{tabla}` (todavía vacía)"
+    if VENTA_LY_ARCHIVO.exists():
+        df = pd.read_csv(VENTA_LY_ARCHIVO, parse_dates=["fecha"])
+        return df, f"archivo `{VENTA_LY_ARCHIVO.relative_to(VENTA_LY_ARCHIVO.parent.parent)}`"
+    return vacio, ""
+
+
+def guardar_venta_ly(nuevo: pd.DataFrame) -> str:
+    """Suma la carga a lo ya guardado (la carga nueva reemplaza los mismos días y tiendas)."""
+    actual, _ = venta_ly_extra()
+    todo = (pd.concat([actual, nuevo]).drop_duplicates(["fecha", "tienda"], keep="last")
+            .sort_values(["tienda", "fecha"]).reset_index(drop=True))
+    todo["fecha"] = pd.to_datetime(todo["fecha"]).dt.date
+    cfg = config_bigquery() or {}
+    tabla = str(cfg.get("venta_ly_table") or "").strip("`")
+    if tabla:
+        bigquery, client = _cliente_bq(cfg)
+        client.load_table_from_dataframe(todo, tabla, job_config=bigquery.LoadJobConfig(
+            write_disposition="WRITE_TRUNCATE",
+            schema=[bigquery.SchemaField("fecha", "DATE"), bigquery.SchemaField("tienda", "STRING"),
+                    bigquery.SchemaField("venta_ly", "FLOAT64")])).result()
+        destino = f"BigQuery `{tabla}`"
+    else:
+        VENTA_LY_ARCHIVO.parent.mkdir(exist_ok=True)
+        todo.to_csv(VENTA_LY_ARCHIVO, index=False)
+        destino = "el servidor (se pierde al reiniciar la app: configura venta_ly_table en los secrets)"
+    st.cache_data.clear()
+    return f"Guardados {len(todo):,} días-tienda en {destino}."
+
+
+def aplicar_venta_ly(df: pd.DataFrame, extra: pd.DataFrame) -> pd.DataFrame:
+    """Reemplaza venta_ly con la cargada a mano: el día D del año pasado es la LY de D + 364."""
+    if extra.empty or df.empty:
+        return df
+    ly = extra.assign(fecha=pd.to_datetime(extra["fecha"]) + pd.Timedelta(days=364))
+    ly = ly.groupby(["fecha", "tienda"], as_index=False)["venta_ly"].sum().rename(columns={"venta_ly": "_ly"})
+    attrs = df.attrs
+    df = df.merge(ly, on=["fecha", "tienda"], how="left")
+    df["venta_ly"] = df["_ly"].where(df["_ly"].notna(), df["venta_ly"])
+    df = df.drop(columns="_ly")
+    df.attrs = attrs
+    return df
+
+
 def _normalizar(df: pd.DataFrame) -> pd.DataFrame:
     df["fecha"] = pd.to_datetime(df["fecha"])
     # BigQuery entrega NUMERIC como Decimal (y enteros como Int64 con nulos): todo a float
@@ -429,6 +589,9 @@ def _normalizar(df: pd.DataFrame) -> pd.DataFrame:
     df["tienda"] = df["tienda"].astype(str).str.strip().str.upper()
     df["casa"] = df["tienda"].map(TIENDA_A_CASA)
     df = df[df["casa"].notna()].reset_index(drop=True)
+    extra, origen = venta_ly_extra()
+    df = aplicar_venta_ly(df, extra)
+    df.attrs["venta_ly_extra"] = (origen, len(extra))
     df.attrs["consultado"] = datetime.now(LIMA)  # hora de la consulta, para mostrarla en la app
     return df
 
