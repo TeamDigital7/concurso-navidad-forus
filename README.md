@@ -58,8 +58,8 @@ venta retail que usa Forusight (ForusIQ): `forus-analitica-prod-datalake.silver.
 
 | Dato | De dónde sale |
 |---|---|
-| venta | `SUM(venta_total_sin_iva)` por `nombre_tienda` y día (`fecmov_lv`) |
-| venta_ly | la misma consulta 364 días antes (mismo día de la semana) |
+| venta | venta **bruta**: `SUM(venta_total_con_iva)` por `nombre_tienda` y día (`fecmov_lv`); otra columna con `ventas_col_monto` |
+| venta_ly | la misma consulta 364 días antes (mismo día de la semana). Para tiendas sin historia en BigQuery (Azaleia) se carga un Excel/CSV en la sección Diagnóstico (`?diagnostico=1`): fecha del año pasado, tienda y venta bruta; se guarda en `venta_ly_table` (secrets) y reemplaza la LY de esos días |
 | tickets | `COUNT(DISTINCT nrodoc_lv)` |
 | tickets fidelizados | regla "Registro Válido" de Power BI sobre `bronze.stg_pe_central_ventas_bi` (ver abajo); si no se puede leer, tickets con `rutcli_lv` de un cliente real |
 | unidades | `SUM(unidades_venta)` |
