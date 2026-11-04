@@ -367,6 +367,8 @@ COLS_VENTA_BRUTA = ["venta_total_con_iva", "venta_total_con_igv", "venta_con_iva
 
 def _col_venta_bruta(client, bigquery, cfg: dict, tabla: str) -> str:
     fija = str(cfg.get("ventas_col_monto") or "").strip().strip("`")
+    if any(x in fija.lower() for x in ("sin_iva", "sin_igv", "neta", "neto")):
+        fija = ""  # el concurso se mide con venta bruta: una columna sin IGV en los secrets se ignora
     try:
         columnas = {c.lower(): c for c in _columnas(client, bigquery, tabla)}
     except Exception:  # sin permiso a INFORMATION_SCHEMA: se confía en la configurada
@@ -387,7 +389,8 @@ def _leer_bigquery(cfg: dict, inicio: date = INICIO, fin: date = FIN) -> pd.Data
                              credentials=cred, location=cfg.get("location"))
     tabla_venta = cfg.get("ventas_retail_table", TABLA_VENTA_RETAIL)
     col_monto = "" if cfg.get("ventas_query") else _col_venta_bruta(client, bigquery, cfg, tabla_venta)
-    sql = cfg.get("ventas_query") or SQL_VENTA.format(
+    # Una ventas_query propia en los secrets también se lleva a venta bruta
+    sql = str(cfg.get("ventas_query") or "").replace("venta_total_sin_iva", "venta_total_con_iva") or SQL_VENTA.format(
         tabla=tabla_venta,
         col_venta=col_monto,
         ruc_valido=sql_ruc_valido("rutcli_lv"),
@@ -416,7 +419,7 @@ def _leer_bigquery(cfg: dict, inicio: date = INICIO, fin: date = FIN) -> pd.Data
     venta.attrs["fidelizacion"] = (aviso, fid is not None)
     venta.attrs["fidelizacion_intentos"] = intentos
     venta.attrs["presupuesto"] = aviso_ppto
-    venta.attrs["col_venta"] = col_monto
+    venta.attrs["col_venta"] = col_monto or "ventas_query de los secrets"
     return venta
 
 
