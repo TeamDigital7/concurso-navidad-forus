@@ -127,6 +127,9 @@ header[data-testid="stHeader"], section[data-testid="stSidebar"], [data-testid="
 .sello.s1 { background: radial-gradient(circle at 35% 30%, #FFF1B8, #E2B33C 55%, #9C7414); }
 .sello.s2 { background: radial-gradient(circle at 35% 30%, #FFFFFF, #C9CED6 55%, #7D838D); }
 .sello.s3 { background: radial-gradient(circle at 35% 30%, #FFD9B0, #C8823F 55%, #7E4A1C); }
+/* 4.° y 5.°: también ganan premio, con gemas propias (esmeralda y amatista) */
+.sello.s4 { background: radial-gradient(circle at 35% 30%, #C8F5DD, #2FA36B 55%, #145C39); color: #06210f; }
+.sello.s5 { background: radial-gradient(circle at 35% 30%, #EBD9FF, #9A6AD6 55%, #4F2C82); color: #1b0a33; }
 
 /* ---------- Tarjetas (panel derecho) ---------- */
 .card { background: var(--panel); border-radius: 16px; padding: 14px 16px;
