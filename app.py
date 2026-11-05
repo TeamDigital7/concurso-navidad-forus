@@ -245,7 +245,7 @@ def tabla_posiciones(r: pd.DataFrame, corte_premio: int | None = None,
           <td class="n pc">{int(x['pts_venta'])}</td><td class="n pc">{int(x['pts_bonus'])}</td>
           <td class="n pc {crece}">{_pct(x['sss'], True)}</td><td class="n pc">{_pct(x['fidelizacion'])}</td>
           <td class="n pc">{x['venta']:,.0f}</td>"""
-        sello = f'<span class="sello s{pos}">{pos}</span>' if pos <= 3 else pos
+        sello = f'<span class="sello s{pos}">{pos}</span>' if pos <= GANADORES_POR_CASA else pos
         filas += f"""<tr class="{cls}"><td class="num">{sello}</td>
           <td><div class="tm"><img src="{escudo(x['casa'])}" alt="{x['casa']}"><b>{x['tienda']}{nota}</b></div></td>
           <td class="n pts">{int(x['puntos'])}</td><td class="n {cumple}">{_pct(x['cumplimiento'])}</td>
@@ -383,16 +383,17 @@ def estado_competencias() -> list[dict]:
     return res
 
 
-def descarga_detalle(rank: pd.DataFrame, dias: pd.DataFrame, desde: date, hasta: date, clase: str):
+def descarga_detalle(rank: pd.DataFrame, dias: pd.DataFrame, desde: date, hasta: date, clase: str,
+                     pt: pd.DataFrame | None = None):
     # La clave termina en _solo-movil / _solo-pc: el CSS la muestra solo en ese dispositivo
     # El Excel se arma recién al tocar el botón (recibe la función): cambiar de pestaña no lo espera
     st.download_button("⬇️ Descargar detalle en Excel",
                        lambda: excel_concurso(rank, dias, estado_competencias(), desde, hasta, bool(simulacion),
-                                              df_all.attrs.get("consultado")),
+                                              df_all.attrs.get("consultado"), pt),
                        f"Forus-Caliz-detalle-{desde:%d%m}-al-{hasta:%d%m}.xlsx",
                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                        width="stretch", key=f"descarga_{clase}", on_click="ignore",
-                       help="Dashboard con los indicadores, hoja Acumulado y una hoja por casa, con las fechas elegidas.")
+                       help="Dashboard con los indicadores, ganadores de cada competencia, hoja Acumulado y una hoja por casa, con las fechas elegidas.")
 
 
 def vista_posiciones():
@@ -404,7 +405,7 @@ def vista_posiciones():
         pt_rango, rank_rango = puntos_en_rango(desde, hasta)
         # Celular: Canal Retail y la descarga arriba, luego la tabla (en PC van a la derecha)
         panel_retail(d_rango, "solo-movil")
-        descarga_detalle(rank_rango, d_rango, desde, hasta, "solo-movil")
+        descarga_detalle(rank_rango, d_rango, desde, hasta, "solo-movil", pt_rango)
         periodo = selector_periodo()
         casa = selector("Casa", ["Todas"] + list(CASAS), "casa")
         casa = None if casa == "Todas" else casa
@@ -430,7 +431,7 @@ def vista_posiciones():
         html(f'<div class="nota">{nota} PTS = puntos · % PPTO = venta vs. presupuesto.</div>')
     with c_side:
         panel_retail(d_rango, "solo-pc")
-        descarga_detalle(rank_rango, d_rango, desde, hasta, "solo-pc")
+        descarga_detalle(rank_rango, d_rango, desde, hasta, "solo-pc", pt_rango)
 
 
 def vista_competencias():

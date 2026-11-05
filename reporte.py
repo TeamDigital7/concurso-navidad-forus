@@ -1,4 +1,5 @@
-"""Excel del concurso: hoja Dashboard con los indicadores, hoja Acumulado y una hoja por casa.
+"""Excel del concurso: hoja Dashboard con los indicadores, hoja Ganadores (los 5 primeros de cada casa
+en cada competencia), hoja Acumulado y una hoja por casa.
 
 Se arma solo cuando alguien toca "Descargar" (el botón recibe la función, no el archivo).
 No incluye premios: es información que no se muestra por tienda.
@@ -23,8 +24,8 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from PIL import Image
 
-from concurso import BONUS_FIDELIZACION, CASAS, DESAFIOS_SSS, RANGO_PAGO
-from puntos import factor_pago, resumen_casas
+from concurso import BONUS_FIDELIZACION, CASAS, COMPETENCIAS, DESAFIOS_SSS, GANADORES_POR_CASA, RANGO_PAGO
+from puntos import factor_pago, ranking, resumen_casas
 
 ASSETS = Path(__file__).parent / "assets"
 PAGA_DESDE = RANGO_PAGO[0][0]
@@ -251,7 +252,7 @@ def _dashboard(ws, rank: pd.DataFrame, dias: pd.DataFrame, competencias: list[di
             fila = base + 3 + k
             fondo = PANEL if k % 2 == 0 else PANEL_2
             puesto = int(rank.index[rank["tienda"] == r["tienda"]][0]) + 1
-            medalla = {1: "🥇", 2: "🥈", 3: "🥉"}.get(puesto) if medallas else None
+            medalla = EMOJI_MEDALLA.get(puesto) if medallas else None
             _celda(ws, f"{cols[0]}{fila}", medalla or puesto, color=ORO_CLARO, fill=fondo, h="center", bold=True)
             _celda(ws, f"{cols[1]}{fila}", r["tienda"], fill=fondo, bold=True, merge=f"{cols[1]}{fila}:{cols[2]}{fila}")
             _celda(ws, f"{cols[3]}{fila}", r["casa"], color=CLARO[r["casa"]],
@@ -303,7 +304,10 @@ COLUMNAS = [  # (campo, título, ancho, formato)
     ("fidelizacion", "% FIDELIZ.", 10, "0.0%"), ("ticket_prom", "TICKET PROM. S/", 11, "#,##0.0"),
     ("upt", "UPT", 8, "0.00"),
 ]
-MEDALLAS = {1: "D4AF37", 2: "C0C0C0", 3: "CD7F32"}
+# Oro, plata, bronce, esmeralda y amatista: los 5 puestos que ganan premio (como en la app)
+MEDALLAS = {1: "D4AF37", 2: "C0C0C0", 3: "CD7F32", 4: "2FA36B", 5: "9A6AD6"}
+TEXTO_MEDALLA = {4: "FFFFFF", 5: "FFFFFF"}
+EMOJI_MEDALLA = {1: "🥇", 2: "🥈", 3: "🥉"}
 
 
 def _detalle(ws, r: pd.DataFrame, titulo: str, subtitulo: str, casa: str | None):
@@ -360,7 +364,11 @@ def _detalle(ws, r: pd.DataFrame, titulo: str, subtitulo: str, casa: str | None)
         p = int(x["puesto"])
         if p in MEDALLAS:
             ws.cell(row=fila, column=1).fill = _fill(MEDALLAS[p])
-            ws.cell(row=fila, column=1).font = Font(name="Calibri", size=10, bold=True, color="1E1E1E")
+            ws.cell(row=fila, column=1).font = Font(name="Calibri", size=10, bold=True,
+                                                    color=TEXTO_MEDALLA.get(p, "1E1E1E"))
+        if casa and p == GANADORES_POR_CASA and len(t) > p:  # línea verde bajo el último que gana
+            for i in range(1, len(COLUMNAS) + 1):
+                ws.cell(row=fila, column=i).border = Border(bottom=Side(style="medium", color="1E8A4C"))
         ws.row_dimensions[fila].height = 18
     fin = cab + len(t)
     if len(t):
@@ -385,8 +393,76 @@ def _detalle(ws, r: pd.DataFrame, titulo: str, subtitulo: str, casa: str | None)
     ws.print_title_rows = f"{cab}:{cab}"
 
 
+def _ganadores(ws, pt: pd.DataFrame, competencias: list[dict], subtitulo: str):
+    """Los 5 primeros de cada casa en cada competencia que ya empezó (sin montos de premio)."""
+    ws.sheet_view.showGridLines = False
+    ws.sheet_properties.tabColor = "1E8A4C"
+    anchos = {"A": 7, "B": 30, "C": 16, "D": 10, "E": 11, "F": 14, "G": 14}
+    for col, w in anchos.items():
+        ws.column_dimensions[col].width = w
+    _pinta(ws, "A1:G3", NOCHE)
+    _pinta(ws, "A4:G4", ORO)
+    ws.row_dimensions[4].height = 4
+    _celda(ws, "A1", "🏆 Ganadores por competencia", size=20, bold=True, color=ORO_CLARO, font=SERIF,
+           merge="A1:G2", v="bottom")
+    _celda(ws, "A3", f"Los {GANADORES_POR_CASA} primeros de cada casa · {subtitulo}", size=10, color="F5ECD0",
+           merge="A3:G3", v="top")
+    estado = {c["nombre"]: c for c in competencias}
+    fila = 6
+    hay = False
+    for comp in COMPETENCIAS:
+        d = pt[pt["competencia"] == comp.nombre] if pt is not None and len(pt) else pt
+        if d is None or d.empty:
+            continue
+        hay = True
+        e = estado.get(comp.nombre, {})
+        cerrada = e.get("estado") == "Cerrada"
+        _pinta(ws, f"A{fila}:G{fila}", BURDEOS)
+        _celda(ws, f"A{fila}", f"{comp.nombre} · {comp.inicio:%d/%m} al {comp.fin:%d/%m} · "
+                               f"{'ganadores' if cerrada else 'van ganando (en curso)'}",
+               size=13, bold=True, color=ORO_CLARO, fill=BURDEOS, font=SERIF, merge=f"A{fila}:G{fila}")
+        ws.row_dimensions[fila].height = 24
+        fila += 1
+        for col, t in zip("ABCDEFG", ["#", "MAGO (TIENDA)", "CASA", "PUNTOS", "% PPTO", "VENTA S/", "SSS"]):
+            _celda(ws, f"{col}{fila}", t, size=9, bold=True, color=ORO_CLARO, fill=NOCHE, h="center")
+        fila += 1
+        r = ranking(d)
+        r["puesto"] = r.groupby("casa").cumcount() + 1
+        for casa in CASAS:
+            top = r[(r["casa"] == casa) & (r["puesto"] <= GANADORES_POR_CASA)]
+            for k, (_, x) in enumerate(top.iterrows()):
+                p = int(x["puesto"])
+                fondo = "FFFFFF" if k % 2 == 0 else PERGAMINO
+                valores = [p, x["tienda"], casa, int(x["puntos"]), _num(x["cumplimiento"]), _num(x["venta"]),
+                           _num(x["sss"])]
+                for col, v, fmt in zip("ABCDEFG", valores, [None, None, None, "0", "0.0%", "#,##0", "+0.0%;-0.0%"]):
+                    _celda(ws, f"{col}{fila}", v, size=10, color="1E1E1E", fill=fondo, fmt=fmt,
+                           h="left" if col == "B" else "center", bold=col in "BD")
+                ws[f"A{fila}"].fill = _fill(MEDALLAS[p])
+                ws[f"A{fila}"].font = Font(name="Calibri", size=10, bold=True, color=TEXTO_MEDALLA.get(p, "1E1E1E"))
+                ws[f"C{fila}"].font = Font(name="Calibri", size=10, bold=True,
+                                           color=_hex(casa) if casa != "Ownership" else "A47E10")
+                if k == len(top) - 1:
+                    for col in "ABCDEFG":
+                        ws[f"{col}{fila}"].border = Border(bottom=Side(style="medium", color=ORO))
+                ws.row_dimensions[fila].height = 18
+                fila += 1
+        fila += 1
+    if not hay:
+        _celda(ws, "A6", "Ninguna competencia tiene venta en las fechas elegidas.", size=11, color=GRIS,
+               merge="A6:G6")
+    _celda(ws, f"A{fila + 1}", "Desempate: mejor % de cumplimiento. El premio se paga según el cumplimiento del "
+                               "canal Retail al cierre de cada competencia.", size=9, color=GRIS,
+           merge=f"A{fila + 1}:G{fila + 1}")
+    ws.freeze_panes = "A6"
+    ws.page_setup.orientation = "portrait"
+    ws.page_setup.fitToWidth, ws.page_setup.fitToHeight = 1, 0
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+
+
 def excel_concurso(rank: pd.DataFrame, dias: pd.DataFrame, competencias: list[dict], desde: date, hasta: date,
-                   simulacion: bool = False, consultado: datetime | None = None) -> bytes:
+                   simulacion: bool = False, consultado: datetime | None = None,
+                   pt: pd.DataFrame | None = None) -> bytes:
     """rank: ranking de magos de las fechas elegidas · dias: venta diaria de esas fechas."""
     periodo = f"del {desde:%d/%m/%Y} al {hasta:%d/%m/%Y}"
     extra = (" · simulación con la venta real de set–oct" if simulacion else "") + (
@@ -394,6 +470,8 @@ def excel_concurso(rank: pd.DataFrame, dias: pd.DataFrame, competencias: list[di
     wb = Workbook()
     wb.active.title = "Dashboard"  # antes de los gráficos: sus referencias llevan el nombre de la hoja
     _dashboard(wb.active, rank, dias, competencias, f"Resumen {periodo}{extra}")
+    if pt is not None:
+        _ganadores(wb.create_sheet("Ganadores"), pt, competencias, f"{periodo}{extra}")
     _detalle(wb.create_sheet("Acumulado"), rank, "Copa del Mejor Mago · Acumulado",
              f"Los {len(rank)} magos {periodo}{extra}", None)
     for casa in CASAS:
