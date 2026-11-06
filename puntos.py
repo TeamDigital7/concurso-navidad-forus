@@ -10,6 +10,9 @@ from concurso import (BONUS_FIDELIZACION, BONUS_SSS, COMPETENCIAS, GANADORES_POR
                       RANGO_PAGO, TRAMOS)
 
 
+ESPERA_CORREO_DIAS = 1  # días que el bonus de fidelización espera el dato de correo tras cerrar el tramo
+
+
 def _asignar(df: pd.DataFrame) -> pd.DataFrame:
     d = df.copy()
     f = d["fecha"].dt.date
@@ -52,8 +55,12 @@ def puntos_por_tramo(df: pd.DataFrame, hasta=None) -> pd.DataFrame:
     g["fidelizacion"] = g["tickets_fidelizados"] / g["tickets"]
     g["pts_venta"] = np.where(g["cumplimiento"] >= 1, g["tramo"].map(lambda i: TRAMOS[i].puntos), 0)
     # El bonus de fidelización espera a tener el correo de todos los días del tramo: nadie lo gana
-    # ni lo pierde por un dato que todavía no llegó. Se otorga solo cuando ventas_bi se pone al día.
+    # ni lo pierde por un dato que todavía no llegó. Pero no espera para siempre: si a los
+    # ESPERA_CORREO_DIAS de cerrado el tramo ventas_bi sigue sin esos días (o no trae la tienda),
+    # se usa la fidelización que ya se muestra (regla por RUC en los días sin correo).
     g["fid_pendiente"] = g["dias_sin_correo"] > 0
+    if hasta is not None:
+        g["fid_pendiente"] &= g["fin"] > pd.Timestamp(hasta).date() - pd.Timedelta(days=ESPERA_CORREO_DIAS)
     g["pts_fidelizacion"] = np.where((g["fidelizacion"] > BONUS_FIDELIZACION["umbral"]) & ~g["fid_pendiente"],
                                      BONUS_FIDELIZACION["puntos"], 0)
     g["pts_sss"] = np.where(g["sss"] > BONUS_SSS["umbral"], BONUS_SSS["puntos"], 0)
@@ -73,6 +80,9 @@ def ranking(pt: pd.DataFrame) -> pd.DataFrame:
         tickets=("tickets", "sum"), tickets_fidelizados=("tickets_fidelizados", "sum"),
         unidades=("unidades", "sum"), tramos_ganados=("pts_venta", lambda s: int((s > 0).sum())),
     )
+    if "fid_pendiente" in pt:  # tramos cerrados con el bonus de fidelización todavía en espera
+        espera = (pt["fid_pendiente"] & pt["cerrado"]).groupby([pt["tienda"], pt["casa"]]).sum()
+        r["bonus_en_espera"] = [int(espera.get((t, c), 0)) for t, c in zip(r["tienda"], r["casa"])]
     r["cumplimiento"] = r["venta"] / r["presupuesto"].replace(0, np.nan)
     r["sss"] = sss(r)
     r["fidelizacion"] = r["tickets_fidelizados"] / r["tickets"]
