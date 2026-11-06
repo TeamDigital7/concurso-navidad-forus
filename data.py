@@ -540,27 +540,37 @@ def _cliente_bq(cfg: dict):
                                      credentials=cred, location=cfg.get("location"))
 
 
+def _venta_ly_archivo() -> pd.DataFrame:
+    if not VENTA_LY_ARCHIVO.exists():
+        return pd.DataFrame(columns=["fecha", "tienda", "venta_ly"])
+    df = pd.read_csv(VENTA_LY_ARCHIVO, parse_dates=["fecha"])
+    df["venta_ly"] = pd.to_numeric(df["venta_ly"], errors="coerce").astype(float)
+    return df
+
+
 @st.cache_data(ttl=ACTUALIZAR_CADA_MIN * 60 - 30, show_spinner=False)
 def venta_ly_extra() -> tuple[pd.DataFrame, str]:
-    """La venta LY cargada a mano y de dónde salió (tabla de BigQuery o archivo del repo)."""
-    vacio = pd.DataFrame(columns=["fecha", "tienda", "venta_ly"])
+    """La venta LY cargada a mano: el archivo del repo (datos/venta_ly_extra.csv) y, encima, lo subido a
+    la tabla de BigQuery `venta_ly_table` (lo subido reemplaza los mismos días y tiendas)."""
+    archivo = _venta_ly_archivo()
+    origenes = ["archivo datos/venta_ly_extra.csv"] if len(archivo) else []
     cfg = config_bigquery() or {}
     tabla = str(cfg.get("venta_ly_table") or "").strip("`")
+    subido = pd.DataFrame(columns=["fecha", "tienda", "venta_ly"])
     if tabla:
         try:
             _, client = _cliente_bq(cfg)
-            df = client.query(f"SELECT fecha, tienda, venta_ly FROM `{tabla}`").to_dataframe()
-            df["fecha"] = pd.to_datetime(df["fecha"])
-            df["venta_ly"] = pd.to_numeric(df["venta_ly"], errors="coerce").astype(float)
-            return df, f"BigQuery `{tabla}`"
+            subido = client.query(f"SELECT fecha, tienda, venta_ly FROM `{tabla}`").to_dataframe()
+            subido["fecha"] = pd.to_datetime(subido["fecha"])
+            subido["venta_ly"] = pd.to_numeric(subido["venta_ly"], errors="coerce").astype(float)
+            origenes.append(f"BigQuery {tabla}")
         except Exception as e:
             if "Not found" not in str(e):
-                return vacio, f"No se pudo leer `{tabla}`: {e}"
-            return vacio, f"BigQuery `{tabla}` (todavía vacía)"
-    if VENTA_LY_ARCHIVO.exists():
-        df = pd.read_csv(VENTA_LY_ARCHIVO, parse_dates=["fecha"])
-        return df, f"archivo `{VENTA_LY_ARCHIVO.relative_to(VENTA_LY_ARCHIVO.parent.parent)}`"
-    return vacio, ""
+                origenes.append(f"no se pudo leer {tabla}: {e}")
+    todo = pd.concat([d for d in (archivo, subido) if len(d)]) if len(archivo) or len(subido) else archivo
+    if len(todo):
+        todo = todo.drop_duplicates(["fecha", "tienda"], keep="last").reset_index(drop=True)
+    return todo, " + ".join(origenes)
 
 
 def guardar_venta_ly(nuevo: pd.DataFrame) -> str:
