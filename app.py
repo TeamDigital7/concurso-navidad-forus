@@ -13,10 +13,10 @@ import streamlit as st
 from auth import auth_configurada, requerir_login, usuario
 from concurso import (CASAS, COMPETENCIAS, DESAFIOS_SSS, FACTOR_PART_TIME, GANADOR_2025, GANADORES_POR_CASA, INICIO,
                       MAESTROS_CC, MAESTROS_TIENDA, NOTAS_TIENDA, PREMIO_CAMPEON, RANGO_PAGO, REGLAMENTO,
-                      TRAMOS, BONUS_FIDELIZACION, BONUS_SSS)
+                      TRAMOS, BONUS_FIDELIZACION, BONUS_SSS, TIENDAS_FID_SOLO_DNI)
 from data import (ACTUALIZAR_CADA_MIN, SIM_DESFASE, cargar_datos, cargar_simulacion, diagnostico_venta,
                   guardar_venta_ly, leer_archivo_venta_ly, venta_ly_extra)
-from puntos import factor_pago, ganadores, puntos_por_tramo, ranking, resumen_casas
+from puntos import ESPERA_CORREO_DIAS, factor_pago, ganadores, puntos_por_tramo, ranking, resumen_casas
 from reporte import excel_concurso
 
 st.set_page_config(page_title="Forus y el Cáliz de los Campeones", page_icon="🏆", layout="wide",
@@ -241,8 +241,10 @@ def tabla_posiciones(r: pd.DataFrame, corte_premio: int | None = None,
         nota = f'<sup title="{NOTAS_TIENDA[x["tienda"]]}">*</sup>' if x["tienda"] in NOTAS_TIENDA else ""
         cumple = "pos" if x["cumplimiento"] >= 1 else "neg"
         crece = "pos" if x["sss"] >= 0 else "neg"
+        espera = ('<span title="Bonus de fidelización en espera: falta el dato de correo de algún día '
+                  'del tramo">⏳</span>' if x.get("bonus_en_espera", 0) else "")
         extra = "" if compacta else f"""
-          <td class="n pc">{int(x['pts_venta'])}</td><td class="n pc">{int(x['pts_bonus'])}</td>
+          <td class="n pc">{int(x['pts_venta'])}</td><td class="n pc">{int(x['pts_bonus'])}{espera}</td>
           <td class="n pc {crece}">{_pct(x['sss'], True)}</td><td class="n pc">{_pct(x['fidelizacion'])}</td>
           <td class="n pc">{x['venta']:,.0f}</td>"""
         sello = f'<span class="sello s{pos}">{pos}</span>' if pos <= GANADORES_POR_CASA else pos
@@ -255,7 +257,7 @@ def tabla_posiciones(r: pd.DataFrame, corte_premio: int | None = None,
           <span class="n pts">{int(x['puntos'])}</span><span class="n {cumple}">{_pct(x['cumplimiento'])}</span></summary>
           <div class="det">
             <div><span>Puntos por venta</span><b>{int(x['pts_venta'])}</b></div>
-            <div><span>Puntos bonus</span><b>{int(x['pts_bonus'])}</b></div>
+            <div><span>Puntos bonus</span><b>{int(x['pts_bonus'])}{espera}</b></div>
             <div><span>% Presupuesto</span><b class="{cumple}">{_pct(x['cumplimiento'], dec=1)}</b></div>
             <div><span>SSS</span><b class="{crece}">{_pct(x['sss'], True, 1)}</b></div>
             <div><span>Fidelización</span><b>{_pct(x['fidelizacion'], dec=1)}</b></div>
@@ -492,8 +494,9 @@ def vista_calendario():
       <div class="nota">Cumplir venta ≥ presupuesto en el tramo da sus puntos. Bonus por tramo:
       fidelización &gt; {BONUS_FIDELIZACION['umbral']:.0%} +{BONUS_FIDELIZACION['puntos']} · SSS &gt;
       {BONUS_SSS['umbral']:.0%} +{BONUS_SSS['puntos']}. El 25/12 no tiene tramo.
-      El bonus de fidelización se otorga cuando están los datos de correo de todos los días del tramo
-      (⏳ = todavía faltan).{aviso_correo}</div>""")
+      El bonus de fidelización espera los datos de correo de todos los días del tramo (⏳ = todavía faltan);
+      si a {ESPERA_CORREO_DIAS} día(s) del cierre siguen faltando, se otorga con la fidelización que muestra
+      la tabla.{aviso_correo}</div>""")
 
 
 def como_se_ganan_puntos():
@@ -519,7 +522,9 @@ def como_se_ganan_puntos():
         <tr><td><b>Puntos por venta</b></td><td>Venta ≥ presupuesto (cumplimiento ≥ 100%)</td>
           <td class="n pts">{min(t.puntos for t in TRAMOS)} a {max(t.puntos for t in TRAMOS)}</td></tr>
         <tr><td><b>Bonus fidelización</b></td><td>Más del {BONUS_FIDELIZACION['umbral']:.0%} de tickets con correo y RUC/DNI válidos.
-          Se otorga cuando están los datos de correo de todos los días del tramo</td>
+          En {", ".join(sorted(TIENDAS_FID_SOLO_DNI))} (muchos turistas) solo cuentan las boletas con DNI peruano
+          (8 dígitos) y el correo debe tener formato válido. Espera los datos de correo de todos los días del
+          tramo (hasta {ESPERA_CORREO_DIAS} día después del cierre)</td>
           <td class="n pts">+{BONUS_FIDELIZACION['puntos']}</td></tr>
         <tr><td><b>Bonus SSS</b></td><td>Crecer más de {BONUS_SSS['umbral']:.0%} vs. el año pasado (mismo día de la semana,
           solo días con venta en los dos años)</td><td class="n pts">+{BONUS_SSS['puntos']}</td></tr>

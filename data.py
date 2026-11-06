@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-from concurso import DESAFIOS_SSS, FIN, INICIO, TIENDA_A_CASA
+from concurso import DESAFIOS_SSS, FIN, INICIO, TIENDA_A_CASA, TIENDAS_FID_SOLO_DNI
 
 COLUMNAS = ["fecha", "tienda", "venta", "presupuesto", "venta_ly", "tickets",
             "tickets_fidelizados", "unidades"]
@@ -39,6 +39,15 @@ def sql_ruc_valido(col: str) -> str:
     r = f"TRIM(IFNULL(CAST({col} AS STRING), ''))"
     return (f"({r} != '' AND NOT REGEXP_CONTAINS({r}, r'^0+$') "
             f"AND IFNULL(SAFE_CAST({r} AS BIGNUMERIC), 0) < {RUC_GENERICO_DESDE})")
+
+# Peruano = DNI: solo números, 8 dígitos (7 si el sistema guardó el número sin el cero inicial).
+# Pasaporte (letras), carné de extranjería (9 dígitos o más) y RUC (11 dígitos) no cuentan.
+def sql_dni_peruano(col: str) -> str:
+    return f"REGEXP_CONTAINS(TRIM(IFNULL(CAST({col} AS STRING), '')), r'^[0-9]{{7,8}}$')"
+
+
+# Correo con buen formato: usuario@dominio.ext (sin espacios, con punto y extensión de 2+ letras)
+CORREO_FORMATO = r"^[a-z0-9._%+\-]+@[a-z0-9\-]+(\.[a-z0-9\-]+)*\.[a-z]{2,}$"
 
 # Venta diaria por tienda del concurso, este año y el mismo día del año pasado (364 días antes,
 # mismo día de la semana). Un ticket es un nrodoc_lv distinto; con RUC válido es la regla de respaldo
@@ -101,7 +110,9 @@ OBLIGATORIAS_BI = ("fecha", "tienda", "documento", "correo", "ruc")
 SQL_FIDELIZACION = """
 SELECT {fecha} AS fecha, UPPER(TRIM(CAST({tienda} AS STRING))) AS clave,
        COUNT(DISTINCT {ticket}) AS tickets_bi,
-       COUNT(DISTINCT IF({valido}, {ticket}, NULL)) AS fidelizados_bi
+       COUNT(DISTINCT IF({valido}, {ticket}, NULL)) AS fidelizados_bi,
+       COUNT(DISTINCT IF({dni}, {ticket}, NULL)) AS tickets_dni,
+       COUNT(DISTINCT IF({dni} AND {valido} AND {correo_ok}, {ticket}, NULL)) AS fidelizados_dni
 FROM `{tabla}`
 WHERE {fecha} BETWEEN @inicio AND @fin
 GROUP BY 1, 2
@@ -171,6 +182,7 @@ def sql_fidelizacion(tabla: str, mapa: dict[str, str], columnas: dict[str, str])
         ticket = f"CONCAT(IFNULL(CAST(`{mapa['tipo_documento']}` AS STRING), ''), '|', {ticket})"
     return SQL_FIDELIZACION.format(
         tabla=tabla, tienda=f"`{mapa['tienda']}`", ticket=ticket, valido=" AND ".join(condiciones),
+        dni=sql_dni_peruano(f"`{mapa['ruc']}`"), correo_ok=f"REGEXP_CONTAINS({correo}, r'{CORREO_FORMATO}')",
         fecha=_sql_fecha(f"`{mapa['fecha']}`", columnas.get(mapa["fecha"], "DATE")))
 
 
@@ -239,9 +251,10 @@ def _leer_fidelizacion(client, cfg: dict, bigquery, inicio: date, fin: date,
         return None, "Ninguna tabla trae el correo del cliente para el periodo.", intentos
     fid = _traducir_tiendas(client, bigquery, fid, tabla_venta, params)
     fid["fecha"] = pd.to_datetime(fid["fecha"])
-    for c in ("tickets_bi", "fidelizados_bi"):
+    cols = ["tickets_bi", "fidelizados_bi", "tickets_dni", "fidelizados_dni"]
+    for c in cols:
         fid[c] = pd.to_numeric(fid[c], errors="coerce").astype(float)
-    fid = fid.groupby(["fecha", "tienda"], as_index=False)[["tickets_bi", "fidelizados_bi"]].sum()
+    fid = fid.groupby(["fecha", "tienda"], as_index=False)[cols].sum()
     intentos[-1]["desde"], intentos[-1]["hasta"] = fid["fecha"].min().date(), fid["fecha"].max().date()
     return fid, f"Fidelización con la regla de Power BI (correo y RUC válidos), de `{tabla}` al {fid['fecha'].max():%d/%m}.", intentos
 
@@ -255,13 +268,17 @@ def aplicar_fidelizacion(venta: pd.DataFrame, fid: pd.DataFrame) -> pd.DataFrame
     v["fecha"] = pd.to_datetime(v["fecha"])
     v = v.merge(fid, on=["fecha", "tienda"], how="left")
     tasa = v["fidelizados_bi"] / v["tickets_bi"].replace(0, np.nan)
+    # Tiendas de turistas: % sobre las boletas con DNI peruano (un día sin ninguna queda en 0)
+    solo_dni = v["tienda"].isin(TIENDAS_FID_SOLO_DNI) & v["tickets_bi"].notna()
+    tasa_dni = (v["fidelizados_dni"] / v["tickets_dni"].replace(0, np.nan)).fillna(0)
+    tasa = tasa.where(~solo_dni, tasa_dni)
     tickets = pd.to_numeric(v["tickets"], errors="coerce").astype(float)
     actual = pd.to_numeric(v["tickets_fidelizados"], errors="coerce").astype(float)
     # Para el diagnóstico: el resultado con la regla por RUC y qué días traen la regla de Power BI
     v["fid_ruc"] = actual
     v["con_bi"] = tasa.notna()
     v["tickets_fidelizados"] = np.where(tasa.notna(), (tickets * tasa).round(), actual)
-    return v.drop(columns=["tickets_bi", "fidelizados_bi"])
+    return v.drop(columns=["tickets_bi", "fidelizados_bi", "tickets_dni", "fidelizados_dni"])
 
 
 def config_bigquery() -> dict | None:
