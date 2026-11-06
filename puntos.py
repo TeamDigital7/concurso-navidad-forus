@@ -10,7 +10,9 @@ from concurso import (BONUS_FIDELIZACION, BONUS_SSS, COMPETENCIAS, GANADORES_POR
                       RANGO_PAGO, TRAMOS)
 
 
-ESPERA_CORREO_DIAS = 1  # días que el bonus de fidelización espera el dato de correo tras cerrar el tramo
+# Días que el bonus de fidelización espera el dato de correo tras cerrar el tramo. En 0: se otorga al
+# cerrar el tramo con la fidelización que se ve en la tabla (sin reloj de arena).
+ESPERA_CORREO_DIAS = 0
 
 
 def _asignar(df: pd.DataFrame) -> pd.DataFrame:
