@@ -107,6 +107,10 @@ TRAMOS = [
 # Puntos bonus por tramo
 BONUS_FIDELIZACION = {"umbral": 0.70, "puntos": 5}   # fidelización mayor al 70%
 BONUS_SSS = {"umbral": 0.10, "puntos": 5}            # crecimiento SSS mayor al 10%
+# Tiendas con muchos turistas: la fidelización se mide solo con las boletas de peruanos (DNI de
+# 8 dígitos), y el ticket es fidelizado si además tiene un correo con formato válido.
+TIENDAS_FID_SOLO_DNI = {"CLB CUSCO PLAZA", "RKF CUSCO", "CLB LARCOMAR", "RKF LARCOMAR 2", "PAT LARCOMAR",
+                        "HP LARCOMAR"}
 
 
 # ---------- Competencias y premios ----------

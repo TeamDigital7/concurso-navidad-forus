@@ -13,7 +13,7 @@ import streamlit as st
 from auth import auth_configurada, requerir_login, usuario
 from concurso import (CASAS, COMPETENCIAS, DESAFIOS_SSS, FACTOR_PART_TIME, GANADOR_2025, GANADORES_POR_CASA, INICIO,
                       MAESTROS_CC, MAESTROS_TIENDA, NOTAS_TIENDA, PREMIO_CAMPEON, RANGO_PAGO, REGLAMENTO,
-                      TRAMOS, BONUS_FIDELIZACION, BONUS_SSS)
+                      TRAMOS, BONUS_FIDELIZACION, BONUS_SSS, TIENDAS_FID_SOLO_DNI)
 from data import (ACTUALIZAR_CADA_MIN, SIM_DESFASE, cargar_datos, cargar_simulacion, diagnostico_venta,
                   guardar_venta_ly, leer_archivo_venta_ly, venta_ly_extra)
 from puntos import ESPERA_CORREO_DIAS, factor_pago, ganadores, puntos_por_tramo, ranking, resumen_casas
@@ -522,7 +522,9 @@ def como_se_ganan_puntos():
         <tr><td><b>Puntos por venta</b></td><td>Venta ≥ presupuesto (cumplimiento ≥ 100%)</td>
           <td class="n pts">{min(t.puntos for t in TRAMOS)} a {max(t.puntos for t in TRAMOS)}</td></tr>
         <tr><td><b>Bonus fidelización</b></td><td>Más del {BONUS_FIDELIZACION['umbral']:.0%} de tickets con correo y RUC/DNI válidos.
-          Se otorga cuando están los datos de correo de todos los días del tramo</td>
+          En {", ".join(sorted(TIENDAS_FID_SOLO_DNI))} (muchos turistas) solo cuentan las boletas con DNI peruano
+          (8 dígitos) y el correo debe tener formato válido. Espera los datos de correo de todos los días del
+          tramo (hasta {ESPERA_CORREO_DIAS} día después del cierre)</td>
           <td class="n pts">+{BONUS_FIDELIZACION['puntos']}</td></tr>
         <tr><td><b>Bonus SSS</b></td><td>Crecer más de {BONUS_SSS['umbral']:.0%} vs. el año pasado (mismo día de la semana,
           solo días con venta en los dos años)</td><td class="n pts">+{BONUS_SSS['puntos']}</td></tr>
