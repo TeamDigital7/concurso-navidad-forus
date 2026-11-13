@@ -95,7 +95,7 @@ En `concurso.TIENDAS_FID_SOLO_DNI` (CLB CUSCO PLAZA, CLB LARCOMAR, HP LARCOMAR, 
 RKF CUSCO y RKF LARCOMAR 2) el % de fidelización es **boletas con DNI peruano y correo válido ÷ total de
 boletas nacionales del día**.
 
-**Cómo se carga**: abrir la app con `?boletas=1` (sección «Boletas nacionales»). En Excel, copiar la tabla
+**Cómo se carga**: en la primera pantalla tocar **📥 Cargar boletas nacionales**. En Excel, copiar la tabla
 dinámica «Cuenta de N° tarjeta» (filtro «Nacional») desde la fila de las fechas hasta «Total general», pegarla
 en el cuadro y tocar **Guardar**. Antes de guardar la app muestra la vista previa, verifica que la suma de las
 tiendas cuadre con el Total general (✅ / ⚠️), avisa qué tiendas faltan o sobran y qué días se corrigen. Se

@@ -15,7 +15,7 @@ from concurso import (CASAS, COMPETENCIAS, DESAFIOS_SSS, FACTOR_PART_TIME, GANAD
                       MAESTROS_CC, MAESTROS_TIENDA, NOTAS_TIENDA, PREMIO_CAMPEON, RANGO_PAGO, REGLAMENTO,
                       TRAMOS, BONUS_FIDELIZACION, BONUS_SSS, BONUS_SSS_SIN_LY, TIENDAS_FID_SOLO_DNI)
 from data import (ACTUALIZAR_CADA_MIN, SIM_DESFASE, boletas_nacionales, cargar_datos, cargar_simulacion,
-                  NOMBRE_REPORTE, config_github, diagnostico_venta, guardar_boletas_nacionales, guardar_venta_ly,
+                  config_github, diagnostico_venta, guardar_boletas_nacionales, guardar_venta_ly,
                   leer_archivo_boletas, leer_archivo_venta_ly, leer_texto_boletas, tabla_boletas, venta_ly_extra)
 from puntos import factor_pago, ganadores, puntos_por_tramo, ranking, resumen_casas
 from reporte import excel_concurso
@@ -704,68 +704,47 @@ def vista_carga_ly():
         st.rerun()
 
 
-def _guardar_nacionales(nuevo: pd.DataFrame):
-    """Botón Guardar: guarda en GitHub, deja el mensaje para después del rerun y limpia lo pegado."""
-    try:
-        st.session_state["msg_nac"] = ("ok", guardar_boletas_nacionales(nuevo))
-        st.session_state["pegado_nac"] = ""
-        st.session_state["subida_nac"] = st.session_state.get("subida_nac", 0) + 1
-    except Exception as e:
-        st.session_state["msg_nac"] = ("error", f"No se guardó: {e}")
-
-
+@st.dialog("📥 Cargar boletas nacionales", width="large")
 def vista_carga_nacionales():
-    """Carga de las boletas nacionales: base del % de fidelización en las tiendas de turistas."""
-    actual, origen = boletas_nacionales()
-    tiendas = ", ".join(sorted(NOMBRE_REPORTE.get(t, t) for t in TIENDAS_FID_SOLO_DNI))
-    html(f"""<div class="card"><div class="card-h">Boletas nacionales · tiendas de turistas</div>
-      <p class="reglas-p">En {tiendas} el % de fidelización es <b>boletas con DNI y correo válido ÷ total de boletas
-      nacionales del día</b>. Para cargar el total de boletas nacionales:</p>
-      <ol class="reglas"><li>En Excel, en la tabla dinámica «Cuenta de N° tarjeta» con el filtro «Nacional», selecciona
-        <b>desde la fila de las fechas hasta la fila Total general</b> y cópiala (Ctrl+C).</li>
-        <li>Pégala en el cuadro de abajo (Ctrl+V). Puedes pegar todos los días: los ya cargados se reemplazan.</li>
-        <li>Revisa que salga ✅ (la suma de las tiendas cuadra con el Total general) y toca <b>Guardar</b>.</li></ol>
-      <p class="reglas-p">Se guarda en GitHub (<code>datos/boletas_nacionales.csv</code>): no se pierde aunque la app
-      se reinicie y queda el historial de cada carga. En un día con números, la tienda en blanco es 0.</p></div>""")
+    """Ventana para pegar la tabla dinámica de boletas nacionales (base del % de fidelización en las tiendas
+    de turistas). Se abre con el botón de la primera pantalla."""
+    st.markdown("En Excel copia la tabla dinámica **desde la fila de las fechas hasta «Total general»** y "
+                "pégala aquí (Ctrl+V). Luego toca **Guardar**.")
     if config_github() is None:
-        st.error("⚠️ Falta configurar el guardado en GitHub: en Streamlit → Settings → Secrets agrega la sección "
-                 "`[github]` con `token`, `repo` y `branch` (ver README). Mientras tanto no se puede guardar.")
-    msg = st.session_state.pop("msg_nac", None)
-    if msg:
-        (st.success if msg[0] == "ok" else st.error)(msg[1])
-    texto = st.text_area("Pega aquí la tabla dinámica", height=180, key="pegado_nac",
-                         placeholder="1/11/2026\t2/11/2026\t3/11/2026 ...\nCLB CUSCO PLAZA\t9\t4\t3 ...\n"
-                                     "...\nTotal general\t64\t34\t39 ...")
-    with st.expander("¿Prefieres subir el archivo Excel con la tabla dinámica?"):
-        archivo = st.file_uploader("Excel o CSV", type=["xlsx", "xls", "csv"],
-                                   key=f"archivo_nac_{st.session_state.get('subida_nac', 0)}")
-    nuevo = None
-    if texto.strip() or archivo is not None:
+        st.error("Todavía no se puede guardar: falta poner el token de GitHub en los Secrets de la app.")
+    texto = st.text_area("Pega aquí la tabla dinámica", height=200, key="pegado_nac",
+                         label_visibility="collapsed", placeholder="Pega aquí la tabla dinámica (Ctrl+V)")
+    if texto.strip():
         try:
-            nuevo, avisos = (leer_texto_boletas(texto) if texto.strip() else
-                             leer_archivo_boletas(archivo, archivo.name))
+            nuevo, avisos = leer_texto_boletas(texto)
         except Exception as e:
             st.error(f"No se pudo leer: {e}")
         else:
             for a in avisos:
                 (st.success if a.startswith("✅") else st.warning)(a)
-            if len(actual):
-                cruce = nuevo.merge(actual.assign(fecha=pd.to_datetime(actual["fecha"])), on=["fecha", "tienda"],
-                                    suffixes=("", "_antes"))
-                cambia = cruce[cruce["boletas"] != cruce["boletas_antes"]]
-                if len(cambia):
-                    st.info("Se corrigen " + ", ".join(
-                        f"{NOMBRE_REPORTE.get(r.tienda, r.tienda)} {r.fecha:%d/%m} ({r.boletas_antes:.0f} → {r.boletas:.0f})"
-                        for r in cambia.head(15).itertuples()) + ("…" if len(cambia) > 15 else ""))
-            html('<div class="card-h">Vista previa de lo que se va a guardar</div>')
             st.dataframe(tabla_boletas(nuevo), hide_index=True, use_container_width=True)
-            st.button(f"💾 Guardar {len(nuevo):,} días-tienda", type="primary", on_click=_guardar_nacionales,
-                      args=(nuevo,), disabled=config_github() is None, use_container_width=True)
-    html(f'<div class="card-h">Ya cargado · {origen}</div>')
+            if st.button("💾 Guardar", type="primary", disabled=config_github() is None, use_container_width=True):
+                try:
+                    with st.spinner("Guardando en GitHub…"):
+                        st.session_state["msg_nac"] = ("ok", guardar_boletas_nacionales(nuevo))
+                except Exception as e:
+                    st.error(f"No se guardó: {e}")
+                    return
+                st.session_state.pop("pegado_nac", None)
+                st.rerun()  # cierra la ventana y recalcula con lo guardado
+    actual, _ = boletas_nacionales()
     if len(actual):
-        st.dataframe(tabla_boletas(actual), hide_index=True, use_container_width=True)
-    else:
-        st.caption("Todavía no hay boletas nacionales cargadas.")
+        with st.expander(f"Ver lo ya cargado (hasta el {actual['fecha'].max():%d/%m})"):
+            st.dataframe(tabla_boletas(actual), hide_index=True, use_container_width=True)
+
+
+def boton_boletas():
+    """Primera pantalla: botón para cargar las boletas nacionales y el resultado de la última carga."""
+    msg = st.session_state.pop("msg_nac", None)
+    if msg:
+        (st.success if msg[0] == "ok" else st.error)(msg[1])
+    if st.button("📥 Cargar boletas nacionales (tiendas de turistas)"):
+        vista_carga_nacionales()
 
 
 # ---------- Pantalla ----------
@@ -774,15 +753,11 @@ auto_actualizar()
 barra_superior(st.session_state.get("casa") if st.session_state.get("casa") in CASAS
                and st.session_state.get("nav", "Posiciones") == "Posiciones" else None)
 interruptor_simulacion()
+boton_boletas()
 # La vista de diagnóstico solo aparece con el link ?diagnostico=1 (para quien revisa los datos)
 secciones = ["Posiciones", "Competencias", "Calendario", "Reglas"]
 if st.query_params.get("diagnostico") == "1":
     secciones.append("Diagnóstico")
-# Carga de boletas nacionales: con ?boletas=1 (abre directo ahí) o junto al diagnóstico
-if st.query_params.get("boletas") == "1" or st.query_params.get("diagnostico") == "1":
-    secciones.append("Boletas nacionales")
-    if st.query_params.get("boletas") == "1":
-        st.session_state.setdefault("nav", "Boletas nacionales")
 vista = selector("Sección", secciones, "nav")
 if vista == "Posiciones":
     vista_posiciones()
@@ -794,8 +769,7 @@ elif vista == "Calendario":
 elif vista == "Diagnóstico":
     vista_carga_ly()
     vista_diagnostico()
-elif vista == "Boletas nacionales":
-    vista_carga_nacionales()
+
 else:
     vista_reglas()
 pie()
