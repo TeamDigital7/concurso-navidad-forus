@@ -165,7 +165,8 @@ def _dashboard(ws, rank: pd.DataFrame, dias: pd.DataFrame, competencias: list[di
     venta, ppto, ly = dias["venta"].sum(), dias["presupuesto"].sum(), dias["venta_ly"].sum()
     cumpl = venta / ppto if ppto else np.nan
     crec = dias["venta"].where(dias["venta_ly"] > 0, 0).sum() / ly - 1 if ly else np.nan
-    fid = dias["tickets_fidelizados"].sum() / dias["tickets"].sum() if dias["tickets"].sum() else np.nan
+    base = (dias["tickets_base_fid"] if "tickets_base_fid" in dias else dias["tickets"]).sum()
+    fid = dias["tickets_fidelizados"].sum() / base if base else np.nan
     mes = dias["fecha"].max().month if len(dias) else 11
     meta_sss = DESAFIOS_SSS.get(mes, 0)
     f = factor_pago(cumpl) if ppto else 0
@@ -206,7 +207,8 @@ def _dashboard(ws, rank: pd.DataFrame, dias: pd.DataFrame, competencias: list[di
     for k, (_, r) in enumerate(casas.iterrows()):
         fila = 26 + k
         de_casa = rank[rank["casa"] == r["casa"]]
-        fz = de_casa["tickets_fidelizados"].sum() / de_casa["tickets"].sum() if de_casa["tickets"].sum() else None
+        base = de_casa["tickets_base_fid"].sum() if "tickets_base_fid" in de_casa else de_casa["tickets"].sum()
+        fz = de_casa["tickets_fidelizados"].sum() / base if base else None
         fondo = PANEL if k % 2 == 0 else PANEL_2
         _celda(ws, f"B{fila}", r["casa"], bold=True, color="FFFFFF", fill=_hex(r["casa"]), merge=f"B{fila}:C{fila}")
         valores = [("D", r["magos"], "0"), ("E", r["venta"], "#,##0"), ("G", r["presupuesto"], "#,##0"),
@@ -297,10 +299,12 @@ def _dashboard(ws, rank: pd.DataFrame, dias: pd.DataFrame, competencias: list[di
 COLUMNAS = [  # (campo, título, ancho, formato)
     ("puesto", "#", 6, "0"), ("tienda", "MAGO (TIENDA)", 28, None), ("casa", "CASA", 15, None),
     ("puntos", "PUNTOS", 10, "0"), ("pts_venta", "PTS VENTA", 10, "0"), ("pts_bonus", "PTS BONUS", 10, "0"),
+    ("pts_sss_ppto", "BONUS 110% PPTO", 10, "0"),
     ("tramos_ganados", "TRAMOS GANADOS", 10, "0"), ("venta", "VENTA S/", 14, "#,##0"),
     ("presupuesto", "PRESUPUESTO S/", 15, "#,##0"), ("cumplimiento", "% PPTO", 10, "0.0%"),
     ("venta_ly", "VENTA AÑO PASADO S/", 15, "#,##0"), ("sss", "SSS", 10, "+0.0%;-0.0%"),
     ("tickets", "TICKETS", 10, "#,##0"), ("tickets_fidelizados", "TICKETS FIDELIZ.", 11, "#,##0"),
+    ("tickets_base_fid", "BASE FIDELIZ.", 11, "#,##0"),
     ("fidelizacion", "% FIDELIZ.", 10, "0.0%"), ("ticket_prom", "TICKET PROM. S/", 11, "#,##0.0"),
     ("upt", "UPT", 8, "0.00"),
 ]

@@ -2,11 +2,13 @@
 
 Entrada: DataFrame con columnas
     fecha, tienda, casa, venta, presupuesto, venta_ly, tickets, tickets_fidelizados, unidades
+y opcional tickets_base_fid: la base del % de fidelización (en las tiendas de turistas, las boletas
+nacionales cargadas a mano); si falta, es `tickets`.
 """
 import numpy as np
 import pandas as pd
 
-from concurso import (BONUS_FIDELIZACION, BONUS_SSS, COMPETENCIAS, GANADORES_POR_CASA,
+from concurso import (BONUS_FIDELIZACION, BONUS_SSS, BONUS_SSS_SIN_LY, COMPETENCIAS, GANADORES_POR_CASA,
                       RANGO_PAGO, TRAMOS)
 
 
@@ -24,6 +26,8 @@ def _asignar(df: pd.DataFrame) -> pd.DataFrame:
         d.loc[(f >= t.inicio) & (f <= t.fin), "tramo"] = i
     for c in COMPETENCIAS:
         d.loc[(f >= c.inicio) & (f <= c.fin), "competencia"] = c.nombre
+    if "tickets_base_fid" not in d:
+        d["tickets_base_fid"] = d["tickets"]
     return d[d["tramo"] >= 0]
 
 
@@ -46,15 +50,15 @@ def puntos_por_tramo(df: pd.DataFrame, hasta=None) -> pd.DataFrame:
     con_bi = d["con_bi"].fillna(False).astype(bool) if "con_bi" in d else True
     d["dias_sin_correo"] = ((d["tickets"] > 0) & ~con_bi).astype(int)
     g = d.groupby(["tienda", "casa", "tramo", "competencia"], as_index=False)[
-        ["venta", "presupuesto", "venta_ly", "venta_comp", "tickets", "tickets_fidelizados", "unidades",
-         "dias_sin_correo"]].sum()
+        ["venta", "presupuesto", "venta_ly", "venta_comp", "tickets", "tickets_fidelizados", "tickets_base_fid",
+         "unidades", "dias_sin_correo"]].sum()
     g["inicio"] = g["tramo"].map(lambda i: TRAMOS[i].inicio)
     g["fin"] = g["tramo"].map(lambda i: TRAMOS[i].fin)
     g["cerrado"] = True if hasta is None else g["fin"] <= hasta
     g["cumplimiento"] = g["venta"] / g["presupuesto"].replace(0, np.nan)
     # Sin venta el año pasado no hay SSS (tienda nueva o cerrada): queda vacío y no da bonus
     g["sss"] = sss(g)
-    g["fidelizacion"] = g["tickets_fidelizados"] / g["tickets"]
+    g["fidelizacion"] = g["tickets_fidelizados"] / g["tickets_base_fid"].replace(0, np.nan)
     g["pts_venta"] = np.where(g["cumplimiento"] >= 1, g["tramo"].map(lambda i: TRAMOS[i].puntos), 0)
     # El bonus de fidelización espera a tener el correo de todos los días del tramo: nadie lo gana
     # ni lo pierde por un dato que todavía no llegó. Pero no espera para siempre: si a los
@@ -65,9 +69,13 @@ def puntos_por_tramo(df: pd.DataFrame, hasta=None) -> pd.DataFrame:
         g["fid_pendiente"] &= g["fin"] > pd.Timestamp(hasta).date() - pd.Timedelta(days=ESPERA_CORREO_DIAS)
     g["pts_fidelizacion"] = np.where((g["fidelizacion"] > BONUS_FIDELIZACION["umbral"]) & ~g["fid_pendiente"],
                                      BONUS_FIDELIZACION["puntos"], 0)
-    g["pts_sss"] = np.where(g["sss"] > BONUS_SSS["umbral"], BONUS_SSS["puntos"], 0)
+    # Sin venta el año pasado en el tramo no hay SSS: el bonus se gana con más del 110% del presupuesto
+    g["sin_ly"] = g["sss"].isna()
+    g["pts_sss_ppto"] = np.where(g["sin_ly"] & (g["cumplimiento"] > BONUS_SSS_SIN_LY["umbral"]),
+                                 BONUS_SSS_SIN_LY["puntos"], 0)
+    g["pts_sss"] = np.where(g["sss"] > BONUS_SSS["umbral"], BONUS_SSS["puntos"], g["pts_sss_ppto"])
     pts = ["pts_venta", "pts_fidelizacion", "pts_sss"]
-    g.loc[~g["cerrado"], pts] = 0
+    g.loc[~g["cerrado"], pts + ["pts_sss_ppto"]] = 0
     g["pts_bonus"] = g["pts_fidelizacion"] + g["pts_sss"]
     g["puntos"] = g[pts].sum(axis=1)
     return g
@@ -77,9 +85,11 @@ def ranking(pt: pd.DataFrame) -> pd.DataFrame:
     """Ranking de magos (tiendas) sobre los tramos recibidos. Desempate: % cumplimiento."""
     r = pt.groupby(["tienda", "casa"], as_index=False).agg(
         puntos=("puntos", "sum"), pts_venta=("pts_venta", "sum"),
-        pts_bonus=("pts_bonus", "sum"), venta=("venta", "sum"),
+        pts_bonus=("pts_bonus", "sum"), pts_fidelizacion=("pts_fidelizacion", "sum"),
+        pts_sss=("pts_sss", "sum"), pts_sss_ppto=("pts_sss_ppto", "sum"), venta=("venta", "sum"),
         presupuesto=("presupuesto", "sum"), venta_ly=("venta_ly", "sum"), venta_comp=("venta_comp", "sum"),
         tickets=("tickets", "sum"), tickets_fidelizados=("tickets_fidelizados", "sum"),
+        tickets_base_fid=("tickets_base_fid", "sum"),
         unidades=("unidades", "sum"), tramos_ganados=("pts_venta", lambda s: int((s > 0).sum())),
     )
     if "fid_pendiente" in pt:  # tramos cerrados con el bonus de fidelización todavía en espera
@@ -87,7 +97,7 @@ def ranking(pt: pd.DataFrame) -> pd.DataFrame:
         r["bonus_en_espera"] = [int(espera.get((t, c), 0)) for t, c in zip(r["tienda"], r["casa"])]
     r["cumplimiento"] = r["venta"] / r["presupuesto"].replace(0, np.nan)
     r["sss"] = sss(r)
-    r["fidelizacion"] = r["tickets_fidelizados"] / r["tickets"]
+    r["fidelizacion"] = r["tickets_fidelizados"] / r["tickets_base_fid"].replace(0, np.nan)
     r["ticket_prom"] = r["venta"] / r["tickets"]
     r["upt"] = r["unidades"] / r["tickets"]
     return r.sort_values(["puntos", "cumplimiento"], ascending=False).reset_index(drop=True)

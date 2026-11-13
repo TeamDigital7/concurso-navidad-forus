@@ -13,9 +13,10 @@ import streamlit as st
 from auth import auth_configurada, requerir_login, usuario
 from concurso import (CASAS, COMPETENCIAS, DESAFIOS_SSS, FACTOR_PART_TIME, GANADOR_2025, GANADORES_POR_CASA, INICIO,
                       MAESTROS_CC, MAESTROS_TIENDA, NOTAS_TIENDA, PREMIO_CAMPEON, RANGO_PAGO, REGLAMENTO,
-                      TRAMOS, BONUS_FIDELIZACION, BONUS_SSS, TIENDAS_FID_SOLO_DNI)
-from data import (ACTUALIZAR_CADA_MIN, SIM_DESFASE, cargar_datos, cargar_simulacion, diagnostico_venta,
-                  guardar_venta_ly, leer_archivo_venta_ly, venta_ly_extra)
+                      TRAMOS, BONUS_FIDELIZACION, BONUS_SSS, BONUS_SSS_SIN_LY, TIENDAS_FID_SOLO_DNI)
+from data import (ACTUALIZAR_CADA_MIN, SIM_DESFASE, boletas_nacionales, cargar_datos, cargar_simulacion,
+                  config_github, diagnostico_venta, guardar_boletas_nacionales, guardar_venta_ly,
+                  leer_archivo_boletas, leer_archivo_venta_ly, plantilla_boletas, tabla_boletas, venta_ly_extra)
 from puntos import factor_pago, ganadores, puntos_por_tramo, ranking, resumen_casas
 from reporte import excel_concurso
 
@@ -135,7 +136,7 @@ def calcular_puntos(df: pd.DataFrame, hasta: date, desde_rango: date | None = No
         f = df["fecha"].dt.date
         pt = puntos_por_tramo(df[(f >= desde_rango) & (f <= hasta_rango)], hasta=hasta)
         parcial = (pt["inicio"] < desde_rango) | (pt["fin"] > hasta_rango)
-        pt.loc[parcial, ["pts_venta", "pts_fidelizacion", "pts_sss", "pts_bonus", "puntos"]] = 0
+        pt.loc[parcial, ["pts_venta", "pts_fidelizacion", "pts_sss", "pts_sss_ppto", "pts_bonus", "puntos"]] = 0
     return pt, ranking(pt)
 
 
@@ -258,6 +259,8 @@ def tabla_posiciones(r: pd.DataFrame, corte_premio: int | None = None,
           <div class="det">
             <div><span>Puntos por venta</span><b>{int(x['pts_venta'])}</b></div>
             <div><span>Puntos bonus</span><b>{int(x['pts_bonus'])}{espera}</b></div>
+            {f"<div><span>Bonus 110% ppto (sin año pasado)</span><b class='pos'>+{int(x['pts_sss_ppto'])}</b></div>"
+             if x.get('pts_sss_ppto', 0) else ""}
             <div><span>% Presupuesto</span><b class="{cumple}">{_pct(x['cumplimiento'], dec=1)}</b></div>
             <div><span>SSS</span><b class="{crece}">{_pct(x['sss'], True, 1)}</b></div>
             <div><span>Fidelización</span><b>{_pct(x['fidelizacion'], dec=1)}</b></div>
@@ -283,7 +286,8 @@ def panel_retail(d: pd.DataFrame, clase: str = ""):
     cumpl = venta / ppto if ppto else 0.0
     sss = d["venta"].where(d["venta_ly"] > 0, 0).sum() / ly - 1 if ly else 0.0  # días comparables
     meta_sss = DESAFIOS_SSS.get(corte.month, 0)
-    fid = d["tickets_fidelizados"].sum() / max(d["tickets"].sum(), 1)
+    base_fid = d["tickets_base_fid"] if "tickets_base_fid" in d else d["tickets"]
+    fid = d["tickets_fidelizados"].sum() / max(base_fid.sum(), 1)
     f = factor_pago(cumpl)
     # Cumplimiento y "Se paga": verde desde el 95%, que es desde donde se paga el premio; rojo debajo
     paga = "pos" if cumpl >= PAGA_DESDE else "neg"
@@ -396,6 +400,10 @@ def descarga_detalle(rank: pd.DataFrame, dias: pd.DataFrame, desde: date, hasta:
                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                        width="stretch", key=f"descarga_{clase}", on_click="ignore",
                        help="Dashboard con los indicadores, ganadores de cada competencia, hoja Acumulado y una hoja por casa, con las fechas elegidas.")
+    if st.button("📥 Cargar boletas nacionales", width="stretch", key=f"boletas_{clase}",
+                 help="Excel con el total de boletas nacionales por día de las tiendas de turistas (base del % de "
+                      "fidelización)."):
+        vista_carga_nacionales()
 
 
 def vista_posiciones():
@@ -481,8 +489,16 @@ def vista_calendario():
             fid, fcls = "⏳ Falta correo", "oro"
         else:
             fid, fcls = f"✓ {int((tramo['pts_fidelizacion'] > 0).sum())} magos", "pos"
+        if t.fin > hoy:
+            sss_txt, scls = "–", ""
+        else:
+            por_ppto = int((tramo["pts_sss_ppto"] > 0).sum())
+            sss_txt = f"✓ {int((tramo['pts_sss'] > 0).sum())} magos" + (
+                f" ({por_ppto} por 110% ppto)" if por_ppto else "")
+            scls = "pos"
         filas += f"""<tr><td>{t.inicio:%d/%m} – {t.fin:%d/%m}</td><td class="n pts">{t.puntos}</td>
-          <td class="{cls}">{estado}</td><td class="n">{ganan}</td><td class="{fcls}">{fid}</td></tr>"""
+          <td class="{cls}">{estado}</td><td class="n">{ganan}</td><td class="{fcls}">{fid}</td>
+          <td class="{scls}">{sss_txt}</td></tr>"""
     if con_correo is None:
         aviso_correo = ""
     elif con_correo.empty:
@@ -490,10 +506,11 @@ def vista_calendario():
     else:
         aviso_correo = f" Datos de correo cargados hasta el <b>{con_correo.max():%d/%m}</b>."
     html(f"""<div class="std-wrap"><table class="std"><thead><tr><th>TRAMO</th><th class="n">PTS</th>
-      <th>ESTADO</th><th class="n">CUMPLIERON</th><th>BONUS FIDELIZ.</th></tr></thead><tbody>{filas}</tbody></table></div>
+      <th>ESTADO</th><th class="n">CUMPLIERON</th><th>BONUS FIDELIZ.</th><th>BONUS SSS</th></tr></thead><tbody>{filas}</tbody></table></div>
       <div class="nota">Cumplir venta ≥ presupuesto en el tramo da sus puntos. Bonus por tramo:
       fidelización &gt; {BONUS_FIDELIZACION['umbral']:.0%} +{BONUS_FIDELIZACION['puntos']} · SSS &gt;
-      {BONUS_SSS['umbral']:.0%} +{BONUS_SSS['puntos']}. El 25/12 no tiene tramo.
+      {BONUS_SSS['umbral']:.0%} +{BONUS_SSS['puntos']} (sin venta el año pasado en el tramo: más del
+      {BONUS_SSS_SIN_LY['umbral']:.0%} del presupuesto +{BONUS_SSS_SIN_LY['puntos']}). El 25/12 no tiene tramo.
       El bonus de fidelización se otorga al cerrar el tramo, con la fidelización que muestra la tabla.{aviso_correo}</div>""")
 
 
@@ -521,11 +538,14 @@ def como_se_ganan_puntos():
           <td class="n pts">{min(t.puntos for t in TRAMOS)} a {max(t.puntos for t in TRAMOS)}</td></tr>
         <tr><td><b>Bonus fidelización</b></td><td>Más del {BONUS_FIDELIZACION['umbral']:.0%} de tickets con correo y RUC/DNI válidos.
           En {", ".join(sorted(TIENDAS_FID_SOLO_DNI))} (muchos turistas) solo cuentan las boletas con DNI peruano
-          (8 dígitos) y el correo debe tener formato válido. Se otorga al cerrar el tramo, con la fidelización
+          (8 dígitos) y el correo debe tener formato válido, y el % se mide sobre el total de boletas nacionales
+          del día. Se otorga al cerrar el tramo, con la fidelización
           que muestra la tabla</td>
           <td class="n pts">+{BONUS_FIDELIZACION['puntos']}</td></tr>
         <tr><td><b>Bonus SSS</b></td><td>Crecer más de {BONUS_SSS['umbral']:.0%} vs. el año pasado (mismo día de la semana,
-          solo días con venta en los dos años)</td><td class="n pts">+{BONUS_SSS['puntos']}</td></tr>
+          solo días con venta en los dos años). Si la tienda no tuvo venta el año pasado en el tramo (no hay SSS),
+          lo gana con más del {BONUS_SSS_SIN_LY['umbral']:.0%} del presupuesto</td>
+          <td class="n pts">+{BONUS_SSS['puntos']}</td></tr>
       </tbody></table></div>
       <p class="reglas-p">Los tramos valen más hacia el final: <b>{valores}</b>. El 25/12 no tiene tramo.</p>
       <p class="reglas-p"><b>Ejemplo:</b> en el tramo del {ej.inicio:%d/%m} al {ej.fin:%d/%m} (vale {ej.puntos}), un mago con
@@ -624,13 +644,17 @@ def vista_diagnostico():
     d = df_all.copy()
     if "fid_ruc" not in d:
         d["fid_ruc"], d["con_bi"] = d["tickets_fidelizados"], False
+    if "tickets_base_fid" not in d:
+        d["tickets_base_fid"] = d["tickets"]
     t = d.groupby(["tienda", "casa"], as_index=False).agg(
-        tickets=("tickets", "sum"), fidelizados=("tickets_fidelizados", "sum"), fid_ruc=("fid_ruc", "sum"),
-        dias=("fecha", "nunique"), dias_bi=("con_bi", "sum"))
-    t["% fidelización (app)"] = t["fidelizados"] / t["tickets"].replace(0, np.nan)
+        tickets=("tickets", "sum"), base=("tickets_base_fid", "sum"), fidelizados=("tickets_fidelizados", "sum"),
+        fid_ruc=("fid_ruc", "sum"), dias=("fecha", "nunique"), dias_bi=("con_bi", "sum"))
+    t["% fidelización (app)"] = t["fidelizados"] / t["base"].replace(0, np.nan)
     t["% regla RUC"] = t["fid_ruc"] / t["tickets"].replace(0, np.nan)
     t["días con regla Power BI"] = t["dias_bi"].astype(int).astype(str) + " de " + t["dias"].astype(str)
-    t = t.sort_values(["casa", "tienda"])[["casa", "tienda", "tickets", "% fidelización (app)", "% regla RUC",
+    t = t.rename(columns={"base": "base fidelización"})
+    t = t.sort_values(["casa", "tienda"])[["casa", "tienda", "tickets", "base fidelización", "% fidelización (app)",
+                                          "% regla RUC",
                                           "días con regla Power BI"]]
     html('<div class="card-h">Fidelización por tienda (todo el periodo)</div>')
     st.dataframe(t, hide_index=True, use_container_width=True,
@@ -684,12 +708,54 @@ def vista_carga_ly():
         st.rerun()
 
 
+@st.dialog("📥 Cargar boletas nacionales", width="large")
+def vista_carga_nacionales():
+    """Ventana para cargar el Excel de boletas nacionales (base del % de fidelización en las tiendas de
+    turistas). Se abre con el botón que está debajo de «Descargar detalle en Excel»."""
+    actual, _ = boletas_nacionales()
+    st.markdown("**1.** Descarga el formato (ya trae lo cargado) y completa el total de boletas nacionales de "
+                "cada tienda por día.")
+    st.download_button("⬇️ Descargar formato Excel", plantilla_boletas(actual), "Boletas-nacionales.xlsx",
+                       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                       use_container_width=True, on_click="ignore")
+    st.markdown("**2.** Súbelo aquí, revisa y toca **Guardar**.")
+    if config_github() is None:
+        st.error("Todavía no se puede guardar: falta poner el token de GitHub en los Secrets de la app.")
+    archivo = st.file_uploader("Excel de boletas nacionales", type=["xlsx", "xls"], key="archivo_nac",
+                               label_visibility="collapsed")
+    if archivo is not None:
+        try:
+            nuevo, avisos = leer_archivo_boletas(archivo, archivo.name)
+        except Exception as e:
+            st.error(f"No se pudo leer el Excel: {e}")
+        else:
+            for a in avisos:
+                (st.success if a.startswith("✅") else st.warning)(a)
+            st.dataframe(tabla_boletas(nuevo), hide_index=True, use_container_width=True)
+            if st.button("💾 Guardar", type="primary", disabled=config_github() is None, use_container_width=True):
+                try:
+                    with st.spinner("Guardando…"):
+                        st.session_state["msg_nac"] = ("ok", guardar_boletas_nacionales(nuevo))
+                except Exception as e:
+                    st.error(f"No se guardó: {e}")
+                    return
+                st.rerun()  # cierra la ventana y recalcula con lo guardado
+
+
+def mensaje_boletas():
+    """Resultado de la última carga de boletas nacionales (se muestra una vez, arriba)."""
+    msg = st.session_state.pop("msg_nac", None)
+    if msg:
+        (st.success if msg[0] == "ok" else st.error)(msg[1])
+
+
 # ---------- Pantalla ----------
 st.session_state["ultima_carga"] = time.time()
 auto_actualizar()
 barra_superior(st.session_state.get("casa") if st.session_state.get("casa") in CASAS
                and st.session_state.get("nav", "Posiciones") == "Posiciones" else None)
 interruptor_simulacion()
+mensaje_boletas()
 # La vista de diagnóstico solo aparece con el link ?diagnostico=1 (para quien revisa los datos)
 secciones = ["Posiciones", "Competencias", "Calendario", "Reglas"]
 if st.query_params.get("diagnostico") == "1":
@@ -705,6 +771,7 @@ elif vista == "Calendario":
 elif vista == "Diagnóstico":
     vista_carga_ly()
     vista_diagnostico()
+
 else:
     vista_reglas()
 pie()

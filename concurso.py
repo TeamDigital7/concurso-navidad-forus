@@ -107,10 +107,17 @@ TRAMOS = [
 # Puntos bonus por tramo
 BONUS_FIDELIZACION = {"umbral": 0.70, "puntos": 5}   # fidelización mayor al 70%
 BONUS_SSS = {"umbral": 0.10, "puntos": 5}            # crecimiento SSS mayor al 10%
+# Tiendas sin venta el año pasado en el tramo (no hay SSS): el bonus SSS se gana con más del 110% del
+# presupuesto, para que no se queden sin opción de sumarlo.
+BONUS_SSS_SIN_LY = {"umbral": 1.10, "puntos": 5}
 # Tiendas con muchos turistas: la fidelización se mide solo con las boletas de peruanos (DNI de
 # 8 dígitos), y el ticket es fidelizado si además tiene un correo con formato válido.
 TIENDAS_FID_SOLO_DNI = {"CLB CUSCO PLAZA", "RKF CUSCO", "PAT CUSCO", "CLB LARCOMAR", "RKF LARCOMAR 2", "PAT LARCOMAR",
                         "HP LARCOMAR"}
+# En esas tiendas la base del % de fidelización es el total de boletas nacionales que se carga a mano
+# (Diagnóstico). Nombres con que vienen en ese reporte y no coinciden con los del concurso:
+ALIAS_TIENDAS_NACIONALES = {"PAT CUSCO PLAZA": "PAT CUSCO", "RKF CUSCO PLAZA": "RKF CUSCO",
+                            "RKF LARCOMAR": "RKF LARCOMAR 2"}
 
 
 # ---------- Competencias y premios ----------

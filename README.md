@@ -47,6 +47,7 @@ Settings → Secrets de Streamlit Cloud:
 |---|---|
 | Cumplir venta ≥ presupuesto en un tramo da sus puntos (10 a 30) | `concurso.TRAMOS` |
 | Bonus: fidelización > 70% (+5) y SSS > 10% (+5) por tramo | `concurso.BONUS_*` |
+| Sin venta el año pasado en el tramo (sin SSS): el bonus SSS (+5) se gana con más del 110% del presupuesto (columna «BONUS 110% PPTO» del Excel y «Bonus SSS» del Calendario) | `concurso.BONUS_SSS_SIN_LY` |
 | 4 competencias, top 5 magos por casa, desempate por % cumplimiento | `concurso.COMPETENCIAS`, `puntos.ganadores` |
 | Factor de pago según cumplimiento del canal Retail (50/75/100/110%) | `concurso.RANGO_PAGO` |
 | Copa del Mejor Mago: suma de todas las competencias | `puntos.ranking` |
@@ -87,6 +88,28 @@ texto (`2026-10-26`, `26/10/2026` o `20261026`). El % por día y tienda se aplic
 venta; los días sin dato muestran el % con la regla por RUC/DNI, pero **el bonus de fidelización
 de un tramo no se otorga hasta tener el correo de todos sus días** (`puntos.puntos_por_tramo`,
 columna `fid_pendiente`): nadie gana ni pierde el bonus por un dato que todavía no llegó.
+
+### Tiendas de turistas: boletas nacionales
+
+En `concurso.TIENDAS_FID_SOLO_DNI` (CLB CUSCO PLAZA, CLB LARCOMAR, HP LARCOMAR, PAT CUSCO, PAT LARCOMAR,
+RKF CUSCO y RKF LARCOMAR 2) el % de fidelización es **boletas con DNI peruano y correo válido ÷ total de
+boletas nacionales del día**.
+
+**Cómo se carga**: debajo de «Descargar detalle en Excel» tocar **📥 Cargar boletas nacionales**, descargar
+el **formato Excel** (una fila por tienda con el nombre del reporte de tarjetas, una columna por día, ya con lo
+cargado y una fila Total general), completar el total de boletas nacionales de cada día, subirlo y tocar
+**Guardar**. Antes de guardar la app muestra la vista previa, verifica que la suma de las tiendas cuadre con el
+Total general (✅ / ⚠️) y avisa qué tiendas faltan o sobran. Un día sin ningún número no se carga; en un día con
+números, la tienda en blanco es 0. Se aceptan los nombres del reporte (PAT CUSCO PLAZA, RKF CUSCO PLAZA, RKF
+LARCOMAR: `concurso.ALIAS_TIENDAS_NACIONALES`) y también la tabla dinámica exportada a Excel.
+
+**Dónde se guarda**: en este repo, `datos/boletas_nacionales.csv`, como un commit hecho por la app con el
+token de `[github]` en los secrets (ver `secrets.example.toml`; token fine-grained solo para este repo con
+permiso *Contents: Read and write*). No se pierde al reiniciar la app y cada carga queda en el historial.
+Después de guardar, la app lo vuelve a leer de GitHub para confirmar que quedó.
+
+La base va en la columna `tickets_base_fid`; los tickets de venta (ticket promedio, UPT) no cambian. Un día
+sin boletas cargadas se mide como antes (sobre las boletas con DNI de ventas_bi).
 
 **Para cuadrar con Power BI**: abrir la app con `?diagnostico=1` (pestaña Diagnóstico). Muestra qué
 tabla se usó y por qué se descartaron las otras, y el % por tienda con las dos reglas, descargable.
