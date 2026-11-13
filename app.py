@@ -13,9 +13,10 @@ import streamlit as st
 from auth import auth_configurada, requerir_login, usuario
 from concurso import (CASAS, COMPETENCIAS, DESAFIOS_SSS, FACTOR_PART_TIME, GANADOR_2025, GANADORES_POR_CASA, INICIO,
                       MAESTROS_CC, MAESTROS_TIENDA, NOTAS_TIENDA, PREMIO_CAMPEON, RANGO_PAGO, REGLAMENTO,
-                      TRAMOS, BONUS_FIDELIZACION, BONUS_SSS, TIENDAS_FID_SOLO_DNI)
-from data import (ACTUALIZAR_CADA_MIN, SIM_DESFASE, cargar_datos, cargar_simulacion, diagnostico_venta,
-                  guardar_venta_ly, leer_archivo_venta_ly, venta_ly_extra)
+                      TRAMOS, BONUS_FIDELIZACION, BONUS_SSS, BONUS_SSS_SIN_LY, TIENDAS_FID_SOLO_DNI)
+from data import (ACTUALIZAR_CADA_MIN, SIM_DESFASE, boletas_nacionales, cargar_datos, cargar_simulacion,
+                  diagnostico_venta, guardar_boletas_nacionales, guardar_venta_ly, leer_archivo_boletas,
+                  leer_archivo_venta_ly, plantilla_boletas, venta_ly_extra)
 from puntos import factor_pago, ganadores, puntos_por_tramo, ranking, resumen_casas
 from reporte import excel_concurso
 
@@ -283,7 +284,8 @@ def panel_retail(d: pd.DataFrame, clase: str = ""):
     cumpl = venta / ppto if ppto else 0.0
     sss = d["venta"].where(d["venta_ly"] > 0, 0).sum() / ly - 1 if ly else 0.0  # días comparables
     meta_sss = DESAFIOS_SSS.get(corte.month, 0)
-    fid = d["tickets_fidelizados"].sum() / max(d["tickets"].sum(), 1)
+    base_fid = d["tickets_base_fid"] if "tickets_base_fid" in d else d["tickets"]
+    fid = d["tickets_fidelizados"].sum() / max(base_fid.sum(), 1)
     f = factor_pago(cumpl)
     # Cumplimiento y "Se paga": verde desde el 95%, que es desde donde se paga el premio; rojo debajo
     paga = "pos" if cumpl >= PAGA_DESDE else "neg"
@@ -521,11 +523,14 @@ def como_se_ganan_puntos():
           <td class="n pts">{min(t.puntos for t in TRAMOS)} a {max(t.puntos for t in TRAMOS)}</td></tr>
         <tr><td><b>Bonus fidelización</b></td><td>Más del {BONUS_FIDELIZACION['umbral']:.0%} de tickets con correo y RUC/DNI válidos.
           En {", ".join(sorted(TIENDAS_FID_SOLO_DNI))} (muchos turistas) solo cuentan las boletas con DNI peruano
-          (8 dígitos) y el correo debe tener formato válido. Se otorga al cerrar el tramo, con la fidelización
+          (8 dígitos) y el correo debe tener formato válido, y el % se mide sobre el total de boletas nacionales
+          del día. Se otorga al cerrar el tramo, con la fidelización
           que muestra la tabla</td>
           <td class="n pts">+{BONUS_FIDELIZACION['puntos']}</td></tr>
         <tr><td><b>Bonus SSS</b></td><td>Crecer más de {BONUS_SSS['umbral']:.0%} vs. el año pasado (mismo día de la semana,
-          solo días con venta en los dos años)</td><td class="n pts">+{BONUS_SSS['puntos']}</td></tr>
+          solo días con venta en los dos años). Si la tienda no tuvo venta el año pasado en el tramo (no hay SSS),
+          lo gana con más del {BONUS_SSS_SIN_LY['umbral']:.0%} del presupuesto</td>
+          <td class="n pts">+{BONUS_SSS['puntos']}</td></tr>
       </tbody></table></div>
       <p class="reglas-p">Los tramos valen más hacia el final: <b>{valores}</b>. El 25/12 no tiene tramo.</p>
       <p class="reglas-p"><b>Ejemplo:</b> en el tramo del {ej.inicio:%d/%m} al {ej.fin:%d/%m} (vale {ej.puntos}), un mago con
@@ -624,13 +629,17 @@ def vista_diagnostico():
     d = df_all.copy()
     if "fid_ruc" not in d:
         d["fid_ruc"], d["con_bi"] = d["tickets_fidelizados"], False
+    if "tickets_base_fid" not in d:
+        d["tickets_base_fid"] = d["tickets"]
     t = d.groupby(["tienda", "casa"], as_index=False).agg(
-        tickets=("tickets", "sum"), fidelizados=("tickets_fidelizados", "sum"), fid_ruc=("fid_ruc", "sum"),
-        dias=("fecha", "nunique"), dias_bi=("con_bi", "sum"))
-    t["% fidelización (app)"] = t["fidelizados"] / t["tickets"].replace(0, np.nan)
+        tickets=("tickets", "sum"), base=("tickets_base_fid", "sum"), fidelizados=("tickets_fidelizados", "sum"),
+        fid_ruc=("fid_ruc", "sum"), dias=("fecha", "nunique"), dias_bi=("con_bi", "sum"))
+    t["% fidelización (app)"] = t["fidelizados"] / t["base"].replace(0, np.nan)
     t["% regla RUC"] = t["fid_ruc"] / t["tickets"].replace(0, np.nan)
     t["días con regla Power BI"] = t["dias_bi"].astype(int).astype(str) + " de " + t["dias"].astype(str)
-    t = t.sort_values(["casa", "tienda"])[["casa", "tienda", "tickets", "% fidelización (app)", "% regla RUC",
+    t = t.rename(columns={"base": "base fidelización"})
+    t = t.sort_values(["casa", "tienda"])[["casa", "tienda", "tickets", "base fidelización", "% fidelización (app)",
+                                          "% regla RUC",
                                           "días con regla Power BI"]]
     html('<div class="card-h">Fidelización por tienda (todo el periodo)</div>')
     st.dataframe(t, hide_index=True, use_container_width=True,
@@ -684,6 +693,48 @@ def vista_carga_ly():
         st.rerun()
 
 
+def vista_carga_nacionales():
+    """Carga de las boletas nacionales: base del % de fidelización en las tiendas de turistas."""
+    actual, origen = boletas_nacionales()
+    origen = origen.replace("`", "")
+    resumen = (f"Hay {len(actual):,} días-tienda cargados ({actual['tienda'].nunique()} tiendas, del "
+               f"{actual['fecha'].min():%d/%m/%Y} al {actual['fecha'].max():%d/%m/%Y}) en {origen}."
+               if len(actual) else (f"Todavía no hay nada cargado. {origen}" if origen else "Todavía no hay nada cargado."))
+    html(f"""<div class="card"><div class="card-h">Boletas nacionales · carga manual</div>
+      <p class="reglas-p">En {", ".join(sorted(TIENDAS_FID_SOLO_DNI))} (muchos turistas) el % de fidelización se mide
+      solo con los peruanos: <b>boletas con DNI y correo válido ÷ total de boletas nacionales del día</b>. Descarga la
+      plantilla (una fila por tienda y una columna por día, como la tabla dinámica de «Cuenta de N° tarjeta» con el
+      filtro «Nacional»), completa los días y súbela. También se puede pegar la tabla dinámica tal cual. Un día sin
+      boletas nacionales cargadas se mide como antes (boletas con DNI de ventas_bi). Subir de nuevo los mismos días
+      los reemplaza.</p><p class="reglas-p">{resumen}</p></div>""")
+    st.download_button("⬇️ Descargar plantilla de boletas nacionales (Excel)", plantilla_boletas(actual),
+                       "plantilla_boletas_nacionales.xlsx",
+                       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    archivo = st.file_uploader("Archivo de boletas nacionales", type=["xlsx", "xls", "csv"], key="archivo_nac")
+    if archivo is None:
+        return
+    try:
+        nuevo, desconocidas = leer_archivo_boletas(archivo, archivo.name)
+    except Exception as e:
+        st.error(f"No se pudo leer el archivo: {e}")
+        return
+    if desconocidas:
+        st.warning("Estas tiendas no son de turistas y se ignoran: " + ", ".join(desconocidas[:20]))
+    if nuevo.empty:
+        st.error("El archivo no trae boletas de las tiendas de turistas.")
+        return
+    tabla = nuevo.pivot_table(index="tienda", columns=nuevo["fecha"].dt.strftime("%d/%m"), values="boletas",
+                              aggfunc="sum").reset_index()
+    st.dataframe(tabla, hide_index=True, use_container_width=True)
+    if st.button(f"Guardar {len(nuevo):,} días-tienda", type="primary", key="guardar_nac"):
+        try:
+            st.success(guardar_boletas_nacionales(nuevo) + " Recargando…")
+        except Exception as e:
+            st.error(f"No se pudo guardar: {e}")
+            return
+        st.rerun()
+
+
 # ---------- Pantalla ----------
 st.session_state["ultima_carga"] = time.time()
 auto_actualizar()
@@ -704,6 +755,7 @@ elif vista == "Calendario":
     vista_calendario()
 elif vista == "Diagnóstico":
     vista_carga_ly()
+    vista_carga_nacionales()
     vista_diagnostico()
 else:
     vista_reglas()

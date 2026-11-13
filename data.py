@@ -8,6 +8,7 @@ La consulta debe devolver estas columnas (una fila por tienda y día):
 La `casa` se asigna con concurso.TIENDA_A_CASA (por nombre de tienda).
 """
 from datetime import date, datetime, timedelta
+import re
 import unicodedata
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -16,7 +17,8 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-from concurso import DESAFIOS_SSS, FIN, INICIO, TIENDA_A_CASA, TIENDAS_FID_SOLO_DNI
+from concurso import (ALIAS_TIENDAS_NACIONALES, DESAFIOS_SSS, FIN, INICIO, TIENDA_A_CASA,
+                      TIENDAS_FID_SOLO_DNI)
 
 COLUMNAS = ["fecha", "tienda", "venta", "presupuesto", "venta_ly", "tickets",
             "tickets_fidelizados", "unidades"]
@@ -277,6 +279,8 @@ def aplicar_fidelizacion(venta: pd.DataFrame, fid: pd.DataFrame) -> pd.DataFrame
     # Para el diagnóstico: el resultado con la regla por RUC y qué días traen la regla de Power BI
     v["fid_ruc"] = actual
     v["con_bi"] = tasa.notna()
+    # Boletas con DNI peruano y correo válido: el numerador cuando la base son las boletas nacionales
+    v["fid_dni"] = v["fidelizados_dni"]
     v["tickets_fidelizados"] = np.where(tasa.notna(), (tickets * tasa).round(), actual)
     return v.drop(columns=["tickets_bi", "fidelizados_bi", "tickets_dni", "fidelizados_dni"])
 
@@ -610,6 +614,248 @@ def aplicar_venta_ly(df: pd.DataFrame, extra: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+# ---------- Boletas nacionales de las tiendas de turistas (carga manual) ----------
+# En TIENDAS_FID_SOLO_DNI la fidelización se mide solo sobre los peruanos. La base del % es el total de
+# boletas nacionales por día que se carga en Diagnóstico (el reporte de tarjetas, filtro "Nacional");
+# el numerador son las boletas con DNI peruano y correo válido de ventas_bi. Se guarda en la tabla de
+# BigQuery `boletas_nacionales_table` de los secrets, si hay; si no, en datos/boletas_nacionales.csv.
+BOLETAS_NAC_ARCHIVO = Path(__file__).parent / "datos" / "boletas_nacionales.csv"
+COLS_NAC = ["fecha", "tienda", "boletas"]
+ALIAS_NAC = {
+    "fecha": ["fecha", "dia", "día", "date", "fecha_venta"],
+    "tienda": ["tienda", "nombre_tienda", "local", "nombre_local", "store", "etiquetas_de_fila"],
+    "boletas": ["boletas_nacionales", "boletas", "nacional", "nacionales", "cantidad", "total",
+                "tickets_nacionales", "cuenta_de_n°_tarjeta", "cuenta_de_no_tarjeta", "cuenta_de_n_tarjeta"],
+}
+_TIENDA_NAC_POR_CLAVE = {_clave(t): t for t in TIENDAS_FID_SOLO_DNI} | {
+    _clave(a): t for a, t in ALIAS_TIENDAS_NACIONALES.items()}
+
+
+def tienda_nacional(nombre) -> str | None:
+    """Nombre del concurso de una tienda de turistas, también con el nombre del reporte (PAT CUSCO PLAZA)."""
+    return _TIENDA_NAC_POR_CLAVE.get(_clave(nombre)) if pd.notna(nombre) else None
+
+
+def _fecha_celda(x):
+    """Una celda de encabezado como fecha (Excel, 2026-11-01 o 1/11/2026), o None."""
+    if x is None or (not isinstance(x, str) and pd.isna(x)):
+        return None
+    if isinstance(x, (datetime, date, pd.Timestamp)):
+        return pd.Timestamp(x).normalize()
+    t = str(x).strip()[:10]
+    if not re.fullmatch(r"\d{1,4}[/-]\d{1,2}[/-]\d{2,4}", t):
+        return None
+    f = pd.to_datetime(t, format="%Y-%m-%d", errors="coerce")
+    if pd.isna(f):
+        f = pd.to_datetime(t, dayfirst=True, errors="coerce")
+    return None if pd.isna(f) else f.normalize()
+
+
+def _boletas_ancho(crudo: pd.DataFrame) -> pd.DataFrame | None:
+    """Formato de la plantilla o de la tabla dinámica: tiendas en filas y fechas en columnas.
+
+    Busca la fila con más fechas como encabezado y la columna con nombres de tienda. Un día sin ningún
+    número no se carga (en la plantilla, los días que faltan); en un día con números, la tienda en
+    blanco tiene 0 boletas nacionales (así sale en la tabla dinámica)."""
+    mejor, cols_fecha = None, {}
+    for i in range(min(len(crudo), 30)):
+        fechas = {j: f for j, x in crudo.iloc[i].items() if (f := _fecha_celda(x)) is not None}
+        if len(fechas) > len(cols_fecha):
+            mejor, cols_fecha = i, fechas
+    if mejor is None:
+        return None
+    filas, numeros = [], []
+    for i in range(mejor + 1, len(crudo)):
+        fila = crudo.iloc[i]
+        tienda = next((t for x in fila.values if isinstance(x, str) and (t := tienda_nacional(x))), None)
+        nombre = next((x for x in fila.values if isinstance(x, str) and x.strip()), None)
+        if tienda is None:
+            if nombre and not _clave(nombre).startswith(("TOTAL", "NACIONAL", "ETIQUETAS")):
+                filas.append({"fecha": None, "tienda": None, "boletas": None, "clave": _clave(nombre)})
+            continue
+        for j, f in cols_fecha.items():
+            n = _numero(pd.Series([fila[j]], dtype=object).astype(str).replace("nan", "")).iloc[0]
+            filas.append({"fecha": f, "tienda": tienda, "boletas": n, "clave": None})
+            if pd.notna(n):
+                numeros.append(f)
+    df = pd.DataFrame(filas, columns=COLS_NAC + ["clave"])
+    # Días con algún número: la tienda en blanco es 0. Días sin ninguno: no se cargan
+    con_dato = df["fecha"].isin(set(numeros))
+    df.loc[con_dato & df["tienda"].notna(), "boletas"] = df.loc[con_dato & df["tienda"].notna(), "boletas"].fillna(0.0)
+    return df
+
+
+def leer_archivo_boletas(archivo, nombre: str) -> tuple[pd.DataFrame, list[str]]:
+    """Excel o CSV → (fecha, tienda, boletas) y los nombres de tienda que no son de turistas.
+
+    Sirve la plantilla (tiendas en filas, fechas en columnas, como la tabla dinámica) o una lista con
+    las columnas fecha, tienda y boletas."""
+    if nombre.lower().endswith((".xlsx", ".xls")):
+        hojas = pd.read_excel(archivo, sheet_name=None, header=None)
+        crudo = next((h for n, h in hojas.items() if "instruc" not in n.lower()), next(iter(hojas.values())))
+    else:
+        crudo = pd.read_csv(archivo, sep=None, engine="python", encoding="utf-8-sig", header=None)
+    crudo = crudo.dropna(how="all").dropna(axis=1, how="all").reset_index(drop=True)
+    if crudo.empty:
+        raise ValueError("El archivo está vacío.")
+    # Lista: la primera fila tiene los títulos fecha, tienda y boletas
+    cols = {_clave(c).lower().replace(" ", "_"): j for j, c in crudo.iloc[0].items() if pd.notna(c)}
+    mapa = {campo: next((cols[a] for a in alias if a in cols), None) for campo, alias in ALIAS_NAC.items()}
+    if all(v is not None for v in mapa.values()):
+        cuerpo = crudo.iloc[1:]
+        df = pd.DataFrame({"fecha": _fecha(cuerpo[mapa["fecha"]]),
+                           "clave": cuerpo[mapa["tienda"]].map(_clave),
+                           "boletas": _numero(cuerpo[mapa["boletas"]])})
+        df["tienda"] = cuerpo[mapa["tienda"]].map(tienda_nacional)
+    else:
+        df = _boletas_ancho(crudo)
+        if df is None:
+            raise ValueError("No se encontraron fechas: usa la plantilla (tiendas en filas y fechas en columnas) "
+                             "o una lista con las columnas fecha, tienda y boletas.")
+    desconocidas = sorted(df.loc[df["tienda"].isna(), "clave"].dropna().unique())
+    df = df.dropna(subset=["fecha", "tienda", "boletas"])
+    df = df.groupby([pd.to_datetime(df["fecha"]).dt.normalize(), "tienda"], as_index=False)["boletas"].sum()
+    return df[COLS_NAC], desconocidas
+
+
+def plantilla_boletas(actual: pd.DataFrame | None = None) -> bytes:
+    """Excel para cargar las boletas nacionales: una fila por tienda y una columna por día del concurso
+    (como la tabla dinámica, se puede pegar encima), con lo ya cargado."""
+    from io import BytesIO
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    dias = pd.date_range(INICIO, FIN)
+    nombre = {t: a for a, t in ALIAS_TIENDAS_NACIONALES.items()}  # como vienen en el reporte de tarjetas
+    tiendas = sorted(TIENDAS_FID_SOLO_DNI, key=lambda t: nombre.get(t, t))
+    valores = {}
+    if actual is not None and len(actual):
+        valores = {(pd.Timestamp(f).normalize(), t): b for f, t, b in actual[COLS_NAC].itertuples(index=False)}
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Boletas nacionales"
+    titulo = Font(bold=True, color="FFFFFF")
+    fondo = PatternFill("solid", fgColor="5C1A1B")
+    ws["A1"] = "TIENDA"
+    ws["A1"].font, ws["A1"].fill = titulo, fondo
+    ws.column_dimensions["A"].width = 20
+    for j, d in enumerate(dias, start=2):
+        c = ws.cell(row=1, column=j, value=d.date())
+        c.number_format, c.font, c.fill = "dd/mm/yyyy", titulo, fondo
+        c.alignment = Alignment(horizontal="center")
+        ws.column_dimensions[get_column_letter(j)].width = 11
+    for i, t in enumerate(tiendas, start=2):
+        ws.cell(row=i, column=1, value=nombre.get(t, t)).font = Font(bold=True)
+        for j, d in enumerate(dias, start=2):
+            v = valores.get((d, t))
+            if v is not None:
+                ws.cell(row=i, column=j, value=int(v) if float(v).is_integer() else v)
+    ws.freeze_panes = "B2"
+    ins = wb.create_sheet("Instrucciones")
+    for k, linea in enumerate([
+        "Boletas nacionales por día de las tiendas de turistas (base del % de fidelización).",
+        "Escribe en la hoja 'Boletas nacionales' el total de boletas nacionales de cada tienda y día",
+        "(la tabla dinámica de 'Cuenta de N° tarjeta' con el filtro 'Nacional'). También puedes pegar la",
+        "tabla dinámica tal cual: se leen las fechas del encabezado y los nombres de tienda.",
+        "Deja en blanco los días que todavía no tienes: un día sin ningún número no se carga.",
+        "En un día con números, la tienda en blanco cuenta como 0 boletas nacionales (como en la tabla dinámica).",
+        "Súbela en la app con ?diagnostico=1 → Diagnóstico → Boletas nacionales. Subir de nuevo los mismos",
+        "días los reemplaza.",
+        "Tiendas: " + ", ".join(nombre.get(t, t) for t in tiendas),
+    ], start=1):
+        ins.cell(row=k, column=1, value=linea)
+    ins.column_dimensions["A"].width = 100
+    buf = BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def _boletas_archivo() -> pd.DataFrame:
+    if not BOLETAS_NAC_ARCHIVO.exists():
+        return pd.DataFrame(columns=COLS_NAC)
+    df = pd.read_csv(BOLETAS_NAC_ARCHIVO, parse_dates=["fecha"])
+    df["boletas"] = pd.to_numeric(df["boletas"], errors="coerce").astype(float)
+    return df
+
+
+@st.cache_data(ttl=ACTUALIZAR_CADA_MIN * 60 - 30, show_spinner=False)
+def boletas_nacionales() -> tuple[pd.DataFrame, str]:
+    """Las boletas nacionales cargadas: el archivo del repo y, encima, la tabla `boletas_nacionales_table`."""
+    archivo = _boletas_archivo()
+    origenes = ["archivo datos/boletas_nacionales.csv"] if len(archivo) else []
+    cfg = config_bigquery() or {}
+    tabla = str(cfg.get("boletas_nacionales_table") or "").strip("`")
+    subido = pd.DataFrame(columns=COLS_NAC)
+    if tabla:
+        try:
+            _, client = _cliente_bq(cfg)
+            subido = client.query(f"SELECT fecha, tienda, boletas FROM `{tabla}`").to_dataframe()
+            subido["fecha"] = pd.to_datetime(subido["fecha"])
+            subido["boletas"] = pd.to_numeric(subido["boletas"], errors="coerce").astype(float)
+            origenes.append(f"BigQuery {tabla}")
+        except Exception as e:
+            if "Not found" not in str(e):
+                origenes.append(f"no se pudo leer {tabla}: {e}")
+    partes = [d for d in (archivo, subido) if len(d)]
+    todo = pd.concat(partes) if partes else archivo
+    if len(todo):
+        todo = todo.drop_duplicates(["fecha", "tienda"], keep="last").reset_index(drop=True)
+    return todo, " + ".join(origenes)
+
+
+def guardar_boletas_nacionales(nuevo: pd.DataFrame) -> str:
+    """Suma la carga a lo ya guardado (la carga nueva reemplaza los mismos días y tiendas)."""
+    actual, _ = boletas_nacionales()
+    todo = (pd.concat([d for d in (actual, nuevo) if len(d)]).drop_duplicates(["fecha", "tienda"], keep="last")
+            .sort_values(["tienda", "fecha"]).reset_index(drop=True))
+    todo["fecha"] = pd.to_datetime(todo["fecha"]).dt.date
+    cfg = config_bigquery() or {}
+    tabla = str(cfg.get("boletas_nacionales_table") or "").strip("`")
+    if tabla:
+        bigquery, client = _cliente_bq(cfg)
+        client.load_table_from_dataframe(todo, tabla, job_config=bigquery.LoadJobConfig(
+            write_disposition="WRITE_TRUNCATE",
+            schema=[bigquery.SchemaField("fecha", "DATE"), bigquery.SchemaField("tienda", "STRING"),
+                    bigquery.SchemaField("boletas", "FLOAT64")])).result()
+        destino = f"BigQuery `{tabla}`"
+    else:
+        BOLETAS_NAC_ARCHIVO.parent.mkdir(exist_ok=True)
+        todo.to_csv(BOLETAS_NAC_ARCHIVO, index=False)
+        destino = "el servidor (se pierde al reiniciar la app: configura boletas_nacionales_table en los secrets)"
+    st.cache_data.clear()
+    return f"Guardados {len(todo):,} días-tienda en {destino}."
+
+
+def aplicar_boletas_nacionales(df: pd.DataFrame, nac: pd.DataFrame) -> pd.DataFrame:
+    """En las tiendas de turistas con boletas nacionales cargadas para el día, esas boletas son la base del
+    % de fidelización (tickets_base_fid) y los fidelizados son las boletas con DNI peruano y correo válido
+    (sin el dato de ventas_bi: el % que ya se ve aplicado a las nacionales), nunca más que la base.
+    Los tickets de venta (ticket promedio, UPT) no cambian."""
+    attrs = df.attrs
+    df = df.copy()
+    df["tickets_base_fid"] = df["tickets"]
+    if nac.empty or df.empty:
+        df.attrs = attrs
+        return df
+    n = nac.assign(fecha=pd.to_datetime(nac["fecha"]).dt.normalize())
+    n = n.groupby(["fecha", "tienda"], as_index=False)["boletas"].sum().rename(columns={"boletas": "_nac"})
+    df = df.merge(n, on=["fecha", "tienda"], how="left")
+    hay = df["_nac"].notna() & df["tienda"].isin(TIENDAS_FID_SOLO_DNI)
+    tasa = (df["tickets_fidelizados"] / df["tickets"].replace(0, np.nan)).fillna(0)
+    fid = (tasa * df["_nac"]).round()
+    if "fid_dni" in df:
+        fid = df["fid_dni"].where(df["fid_dni"].notna(), fid)
+    fid = np.minimum(fid.fillna(0), df["_nac"])
+    df.loc[hay, "tickets_fidelizados"] = fid[hay]
+    df.loc[hay, "tickets_base_fid"] = df.loc[hay, "_nac"]
+    df["nacionales_cargadas"] = hay
+    df = df.drop(columns="_nac")
+    df.attrs = attrs
+    return df
+
+
 def _normalizar(df: pd.DataFrame) -> pd.DataFrame:
     df["fecha"] = pd.to_datetime(df["fecha"])
     # BigQuery entrega NUMERIC como Decimal (y enteros como Int64 con nulos): todo a float
@@ -622,6 +868,9 @@ def _normalizar(df: pd.DataFrame) -> pd.DataFrame:
     extra, origen = venta_ly_extra()
     df = aplicar_venta_ly(df, extra)
     df.attrs["venta_ly_extra"] = (origen, len(extra))
+    nac, origen_nac = boletas_nacionales()
+    df = aplicar_boletas_nacionales(df, nac)
+    df.attrs["boletas_nacionales"] = (origen_nac, len(nac))
     df.attrs["consultado"] = datetime.now(LIMA)  # hora de la consulta, para mostrarla en la app
     return df
 
