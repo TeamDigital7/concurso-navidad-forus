@@ -16,7 +16,7 @@ from concurso import (CASAS, COMPETENCIAS, DESAFIOS_SSS, FACTOR_PART_TIME, GANAD
                       TRAMOS, BONUS_FIDELIZACION, BONUS_SSS, BONUS_SSS_SIN_LY, TIENDAS_FID_SOLO_DNI)
 from data import (ACTUALIZAR_CADA_MIN, SIM_DESFASE, boletas_nacionales, cargar_datos, cargar_simulacion,
                   config_github, diagnostico_venta, guardar_boletas_nacionales, guardar_venta_ly,
-                  leer_archivo_boletas, leer_archivo_venta_ly, leer_texto_boletas, tabla_boletas, venta_ly_extra)
+                  leer_archivo_boletas, leer_archivo_venta_ly, plantilla_boletas, tabla_boletas, venta_ly_extra)
 from puntos import factor_pago, ganadores, puntos_por_tramo, ranking, resumen_casas
 from reporte import excel_concurso
 
@@ -400,6 +400,10 @@ def descarga_detalle(rank: pd.DataFrame, dias: pd.DataFrame, desde: date, hasta:
                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                        width="stretch", key=f"descarga_{clase}", on_click="ignore",
                        help="Dashboard con los indicadores, ganadores de cada competencia, hoja Acumulado y una hoja por casa, con las fechas elegidas.")
+    if st.button("📥 Cargar boletas nacionales", width="stretch", key=f"boletas_{clase}",
+                 help="Excel con el total de boletas nacionales por día de las tiendas de turistas (base del % de "
+                      "fidelización)."):
+        vista_carga_nacionales()
 
 
 def vista_posiciones():
@@ -706,45 +710,43 @@ def vista_carga_ly():
 
 @st.dialog("📥 Cargar boletas nacionales", width="large")
 def vista_carga_nacionales():
-    """Ventana para pegar la tabla dinámica de boletas nacionales (base del % de fidelización en las tiendas
-    de turistas). Se abre con el botón de la primera pantalla."""
-    st.markdown("En Excel copia la tabla dinámica **desde la fila de las fechas hasta «Total general»** y "
-                "pégala aquí (Ctrl+V). Luego toca **Guardar**.")
+    """Ventana para cargar el Excel de boletas nacionales (base del % de fidelización en las tiendas de
+    turistas). Se abre con el botón que está debajo de «Descargar detalle en Excel»."""
+    actual, _ = boletas_nacionales()
+    st.markdown("**1.** Descarga el formato (ya trae lo cargado) y completa el total de boletas nacionales de "
+                "cada tienda por día.")
+    st.download_button("⬇️ Descargar formato Excel", plantilla_boletas(actual), "Boletas-nacionales.xlsx",
+                       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                       use_container_width=True, on_click="ignore")
+    st.markdown("**2.** Súbelo aquí, revisa y toca **Guardar**.")
     if config_github() is None:
         st.error("Todavía no se puede guardar: falta poner el token de GitHub en los Secrets de la app.")
-    texto = st.text_area("Pega aquí la tabla dinámica", height=200, key="pegado_nac",
-                         label_visibility="collapsed", placeholder="Pega aquí la tabla dinámica (Ctrl+V)")
-    if texto.strip():
+    archivo = st.file_uploader("Excel de boletas nacionales", type=["xlsx", "xls"], key="archivo_nac",
+                               label_visibility="collapsed")
+    if archivo is not None:
         try:
-            nuevo, avisos = leer_texto_boletas(texto)
+            nuevo, avisos = leer_archivo_boletas(archivo, archivo.name)
         except Exception as e:
-            st.error(f"No se pudo leer: {e}")
+            st.error(f"No se pudo leer el Excel: {e}")
         else:
             for a in avisos:
                 (st.success if a.startswith("✅") else st.warning)(a)
             st.dataframe(tabla_boletas(nuevo), hide_index=True, use_container_width=True)
             if st.button("💾 Guardar", type="primary", disabled=config_github() is None, use_container_width=True):
                 try:
-                    with st.spinner("Guardando en GitHub…"):
+                    with st.spinner("Guardando…"):
                         st.session_state["msg_nac"] = ("ok", guardar_boletas_nacionales(nuevo))
                 except Exception as e:
                     st.error(f"No se guardó: {e}")
                     return
-                st.session_state.pop("pegado_nac", None)
                 st.rerun()  # cierra la ventana y recalcula con lo guardado
-    actual, _ = boletas_nacionales()
-    if len(actual):
-        with st.expander(f"Ver lo ya cargado (hasta el {actual['fecha'].max():%d/%m})"):
-            st.dataframe(tabla_boletas(actual), hide_index=True, use_container_width=True)
 
 
-def boton_boletas():
-    """Primera pantalla: botón para cargar las boletas nacionales y el resultado de la última carga."""
+def mensaje_boletas():
+    """Resultado de la última carga de boletas nacionales (se muestra una vez, arriba)."""
     msg = st.session_state.pop("msg_nac", None)
     if msg:
         (st.success if msg[0] == "ok" else st.error)(msg[1])
-    if st.button("📥 Cargar boletas nacionales (tiendas de turistas)"):
-        vista_carga_nacionales()
 
 
 # ---------- Pantalla ----------
@@ -753,7 +755,7 @@ auto_actualizar()
 barra_superior(st.session_state.get("casa") if st.session_state.get("casa") in CASAS
                and st.session_state.get("nav", "Posiciones") == "Posiciones" else None)
 interruptor_simulacion()
-boton_boletas()
+mensaje_boletas()
 # La vista de diagnóstico solo aparece con el link ?diagnostico=1 (para quien revisa los datos)
 secciones = ["Posiciones", "Competencias", "Calendario", "Reglas"]
 if st.query_params.get("diagnostico") == "1":

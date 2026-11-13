@@ -95,12 +95,13 @@ En `concurso.TIENDAS_FID_SOLO_DNI` (CLB CUSCO PLAZA, CLB LARCOMAR, HP LARCOMAR, 
 RKF CUSCO y RKF LARCOMAR 2) el % de fidelización es **boletas con DNI peruano y correo válido ÷ total de
 boletas nacionales del día**.
 
-**Cómo se carga**: en la primera pantalla tocar **📥 Cargar boletas nacionales**. En Excel, copiar la tabla
-dinámica «Cuenta de N° tarjeta» (filtro «Nacional») desde la fila de las fechas hasta «Total general», pegarla
-en el cuadro y tocar **Guardar**. Antes de guardar la app muestra la vista previa, verifica que la suma de las
-tiendas cuadre con el Total general (✅ / ⚠️), avisa qué tiendas faltan o sobran y qué días se corrigen. Se
-aceptan los nombres del reporte (PAT CUSCO PLAZA, RKF CUSCO PLAZA, RKF LARCOMAR:
-`concurso.ALIAS_TIENDAS_NACIONALES`). También se puede subir el Excel.
+**Cómo se carga**: debajo de «Descargar detalle en Excel» tocar **📥 Cargar boletas nacionales**, descargar
+el **formato Excel** (una fila por tienda con el nombre del reporte de tarjetas, una columna por día, ya con lo
+cargado y una fila Total general), completar el total de boletas nacionales de cada día, subirlo y tocar
+**Guardar**. Antes de guardar la app muestra la vista previa, verifica que la suma de las tiendas cuadre con el
+Total general (✅ / ⚠️) y avisa qué tiendas faltan o sobran. Un día sin ningún número no se carga; en un día con
+números, la tienda en blanco es 0. Se aceptan los nombres del reporte (PAT CUSCO PLAZA, RKF CUSCO PLAZA, RKF
+LARCOMAR: `concurso.ALIAS_TIENDAS_NACIONALES`) y también la tabla dinámica exportada a Excel.
 
 **Dónde se guarda**: en este repo, `datos/boletas_nacionales.csv`, como un commit hecho por la app con el
 token de `[github]` en los secrets (ver `secrets.example.toml`; token fine-grained solo para este repo con

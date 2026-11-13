@@ -781,6 +781,70 @@ def tabla_boletas(df: pd.DataFrame) -> pd.DataFrame:
     return t.reset_index().rename(columns={"index": "tienda"})
 
 
+def plantilla_boletas(actual: pd.DataFrame | None = None) -> bytes:
+    """Excel con formato para cargar las boletas nacionales: una fila por tienda (con el nombre del reporte de
+    tarjetas) y una columna por día del concurso, con lo ya cargado y una fila TOTAL que suma sola."""
+    from io import BytesIO
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
+
+    dias = pd.date_range(INICIO, FIN)
+    tiendas = sorted(TIENDAS_FID_SOLO_DNI, key=lambda t: NOMBRE_REPORTE.get(t, t))
+    valores = {}
+    if actual is not None and len(actual):
+        valores = {(pd.Timestamp(f).normalize(), t): b for f, t, b in actual[COLS_NAC].itertuples(index=False)}
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Boletas nacionales"
+    vino, oro, crema = "5C1A1B", "D4AF37", "FFF8E7"
+    linea = Side(style="thin", color="D9D9D9")
+    borde = Border(left=linea, right=linea, top=linea, bottom=linea)
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=12)
+    ws["A1"] = "BOLETAS NACIONALES POR DÍA · tiendas de turistas"
+    ws["A1"].font = Font(bold=True, size=14, color=vino)
+    ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=12)
+    ws["A2"] = ("Escribe (o pega) el total de boletas nacionales de cada tienda en la columna de su día. Deja en "
+                "blanco los días que aún no tienes. Guarda y súbelo en la app.")
+    ws["A2"].font = Font(italic=True, size=10, color="595959")
+    cab = 4
+    c = ws.cell(row=cab, column=1, value="TIENDA")
+    c.font, c.fill, c.alignment, c.border = Font(bold=True, color="FFFFFF"), PatternFill("solid", fgColor=vino), \
+        Alignment(horizontal="center", vertical="center"), borde
+    ws.column_dimensions["A"].width = 22
+    for j, d in enumerate(dias, start=2):
+        c = ws.cell(row=cab, column=j, value=d.to_pydatetime())
+        c.number_format = "dd/mm/yyyy"
+        c.font = Font(bold=True, color="FFFFFF")
+        c.fill = PatternFill("solid", fgColor=vino if d.weekday() < 5 else "8B2E2F")
+        c.alignment, c.border = Alignment(horizontal="center", vertical="center"), borde
+        ws.column_dimensions[get_column_letter(j)].width = 11
+    ws.row_dimensions[cab].height = 22
+    for i, t in enumerate(tiendas, start=cab + 1):
+        c = ws.cell(row=i, column=1, value=NOMBRE_REPORTE.get(t, t))
+        c.font, c.border = Font(bold=True), borde
+        for j, d in enumerate(dias, start=2):
+            v = valores.get((d, t))
+            c = ws.cell(row=i, column=j, value=None if v is None else (int(v) if float(v).is_integer() else v))
+            c.number_format, c.border = "0", borde
+            c.alignment = Alignment(horizontal="center")
+            c.fill = PatternFill("solid", fgColor=crema if i % 2 else "FFFFFF")
+    fila_total = cab + len(tiendas) + 1
+    c = ws.cell(row=fila_total, column=1, value="Total general")
+    c.font, c.fill, c.border = Font(bold=True), PatternFill("solid", fgColor=oro), borde
+    for j in range(2, len(dias) + 2):
+        col = get_column_letter(j)
+        c = ws.cell(row=fila_total, column=j,
+                    value=f'=IF(COUNT({col}{cab + 1}:{col}{fila_total - 1})=0,"",SUM({col}{cab + 1}:{col}{fila_total - 1}))')
+        c.font, c.fill, c.border = Font(bold=True), PatternFill("solid", fgColor=oro), borde
+        c.alignment, c.number_format = Alignment(horizontal="center"), "0"
+    ws.freeze_panes = ws.cell(row=cab + 1, column=2)
+    buf = BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
 # ---------- Guardado en GitHub ----------
 def config_github() -> dict | None:
     """[github] en los secrets: token (fine-grained, permiso Contents: read and write en el repo), repo
