@@ -71,11 +71,11 @@ def puntos_por_tramo(df: pd.DataFrame, hasta=None) -> pd.DataFrame:
                                      BONUS_FIDELIZACION["puntos"], 0)
     # Sin venta el año pasado en el tramo no hay SSS: el bonus se gana con más del 110% del presupuesto
     g["sin_ly"] = g["sss"].isna()
-    g["pts_sss"] = np.where(g["sss"] > BONUS_SSS["umbral"], BONUS_SSS["puntos"],
-                            np.where(g["sin_ly"] & (g["cumplimiento"] > BONUS_SSS_SIN_LY["umbral"]),
-                                     BONUS_SSS_SIN_LY["puntos"], 0))
+    g["pts_sss_ppto"] = np.where(g["sin_ly"] & (g["cumplimiento"] > BONUS_SSS_SIN_LY["umbral"]),
+                                 BONUS_SSS_SIN_LY["puntos"], 0)
+    g["pts_sss"] = np.where(g["sss"] > BONUS_SSS["umbral"], BONUS_SSS["puntos"], g["pts_sss_ppto"])
     pts = ["pts_venta", "pts_fidelizacion", "pts_sss"]
-    g.loc[~g["cerrado"], pts] = 0
+    g.loc[~g["cerrado"], pts + ["pts_sss_ppto"]] = 0
     g["pts_bonus"] = g["pts_fidelizacion"] + g["pts_sss"]
     g["puntos"] = g[pts].sum(axis=1)
     return g
@@ -85,7 +85,8 @@ def ranking(pt: pd.DataFrame) -> pd.DataFrame:
     """Ranking de magos (tiendas) sobre los tramos recibidos. Desempate: % cumplimiento."""
     r = pt.groupby(["tienda", "casa"], as_index=False).agg(
         puntos=("puntos", "sum"), pts_venta=("pts_venta", "sum"),
-        pts_bonus=("pts_bonus", "sum"), venta=("venta", "sum"),
+        pts_bonus=("pts_bonus", "sum"), pts_fidelizacion=("pts_fidelizacion", "sum"),
+        pts_sss=("pts_sss", "sum"), pts_sss_ppto=("pts_sss_ppto", "sum"), venta=("venta", "sum"),
         presupuesto=("presupuesto", "sum"), venta_ly=("venta_ly", "sum"), venta_comp=("venta_comp", "sum"),
         tickets=("tickets", "sum"), tickets_fidelizados=("tickets_fidelizados", "sum"),
         tickets_base_fid=("tickets_base_fid", "sum"),

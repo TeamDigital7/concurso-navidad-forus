@@ -299,6 +299,7 @@ def _dashboard(ws, rank: pd.DataFrame, dias: pd.DataFrame, competencias: list[di
 COLUMNAS = [  # (campo, título, ancho, formato)
     ("puesto", "#", 6, "0"), ("tienda", "MAGO (TIENDA)", 28, None), ("casa", "CASA", 15, None),
     ("puntos", "PUNTOS", 10, "0"), ("pts_venta", "PTS VENTA", 10, "0"), ("pts_bonus", "PTS BONUS", 10, "0"),
+    ("pts_sss_ppto", "BONUS 110% PPTO", 10, "0"),
     ("tramos_ganados", "TRAMOS GANADOS", 10, "0"), ("venta", "VENTA S/", 14, "#,##0"),
     ("presupuesto", "PRESUPUESTO S/", 15, "#,##0"), ("cumplimiento", "% PPTO", 10, "0.0%"),
     ("venta_ly", "VENTA AÑO PASADO S/", 15, "#,##0"), ("sss", "SSS", 10, "+0.0%;-0.0%"),

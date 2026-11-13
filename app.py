@@ -15,8 +15,8 @@ from concurso import (CASAS, COMPETENCIAS, DESAFIOS_SSS, FACTOR_PART_TIME, GANAD
                       MAESTROS_CC, MAESTROS_TIENDA, NOTAS_TIENDA, PREMIO_CAMPEON, RANGO_PAGO, REGLAMENTO,
                       TRAMOS, BONUS_FIDELIZACION, BONUS_SSS, BONUS_SSS_SIN_LY, TIENDAS_FID_SOLO_DNI)
 from data import (ACTUALIZAR_CADA_MIN, SIM_DESFASE, boletas_nacionales, cargar_datos, cargar_simulacion,
-                  diagnostico_venta, guardar_boletas_nacionales, guardar_venta_ly, leer_archivo_boletas,
-                  leer_archivo_venta_ly, plantilla_boletas, venta_ly_extra)
+                  NOMBRE_REPORTE, config_github, diagnostico_venta, guardar_boletas_nacionales, guardar_venta_ly,
+                  leer_archivo_boletas, leer_archivo_venta_ly, leer_texto_boletas, tabla_boletas, venta_ly_extra)
 from puntos import factor_pago, ganadores, puntos_por_tramo, ranking, resumen_casas
 from reporte import excel_concurso
 
@@ -136,7 +136,7 @@ def calcular_puntos(df: pd.DataFrame, hasta: date, desde_rango: date | None = No
         f = df["fecha"].dt.date
         pt = puntos_por_tramo(df[(f >= desde_rango) & (f <= hasta_rango)], hasta=hasta)
         parcial = (pt["inicio"] < desde_rango) | (pt["fin"] > hasta_rango)
-        pt.loc[parcial, ["pts_venta", "pts_fidelizacion", "pts_sss", "pts_bonus", "puntos"]] = 0
+        pt.loc[parcial, ["pts_venta", "pts_fidelizacion", "pts_sss", "pts_sss_ppto", "pts_bonus", "puntos"]] = 0
     return pt, ranking(pt)
 
 
@@ -259,6 +259,8 @@ def tabla_posiciones(r: pd.DataFrame, corte_premio: int | None = None,
           <div class="det">
             <div><span>Puntos por venta</span><b>{int(x['pts_venta'])}</b></div>
             <div><span>Puntos bonus</span><b>{int(x['pts_bonus'])}{espera}</b></div>
+            {f"<div><span>Bonus 110% ppto (sin año pasado)</span><b class='pos'>+{int(x['pts_sss_ppto'])}</b></div>"
+             if x.get('pts_sss_ppto', 0) else ""}
             <div><span>% Presupuesto</span><b class="{cumple}">{_pct(x['cumplimiento'], dec=1)}</b></div>
             <div><span>SSS</span><b class="{crece}">{_pct(x['sss'], True, 1)}</b></div>
             <div><span>Fidelización</span><b>{_pct(x['fidelizacion'], dec=1)}</b></div>
@@ -483,8 +485,16 @@ def vista_calendario():
             fid, fcls = "⏳ Falta correo", "oro"
         else:
             fid, fcls = f"✓ {int((tramo['pts_fidelizacion'] > 0).sum())} magos", "pos"
+        if t.fin > hoy:
+            sss_txt, scls = "–", ""
+        else:
+            por_ppto = int((tramo["pts_sss_ppto"] > 0).sum())
+            sss_txt = f"✓ {int((tramo['pts_sss'] > 0).sum())} magos" + (
+                f" ({por_ppto} por 110% ppto)" if por_ppto else "")
+            scls = "pos"
         filas += f"""<tr><td>{t.inicio:%d/%m} – {t.fin:%d/%m}</td><td class="n pts">{t.puntos}</td>
-          <td class="{cls}">{estado}</td><td class="n">{ganan}</td><td class="{fcls}">{fid}</td></tr>"""
+          <td class="{cls}">{estado}</td><td class="n">{ganan}</td><td class="{fcls}">{fid}</td>
+          <td class="{scls}">{sss_txt}</td></tr>"""
     if con_correo is None:
         aviso_correo = ""
     elif con_correo.empty:
@@ -492,10 +502,11 @@ def vista_calendario():
     else:
         aviso_correo = f" Datos de correo cargados hasta el <b>{con_correo.max():%d/%m}</b>."
     html(f"""<div class="std-wrap"><table class="std"><thead><tr><th>TRAMO</th><th class="n">PTS</th>
-      <th>ESTADO</th><th class="n">CUMPLIERON</th><th>BONUS FIDELIZ.</th></tr></thead><tbody>{filas}</tbody></table></div>
+      <th>ESTADO</th><th class="n">CUMPLIERON</th><th>BONUS FIDELIZ.</th><th>BONUS SSS</th></tr></thead><tbody>{filas}</tbody></table></div>
       <div class="nota">Cumplir venta ≥ presupuesto en el tramo da sus puntos. Bonus por tramo:
       fidelización &gt; {BONUS_FIDELIZACION['umbral']:.0%} +{BONUS_FIDELIZACION['puntos']} · SSS &gt;
-      {BONUS_SSS['umbral']:.0%} +{BONUS_SSS['puntos']}. El 25/12 no tiene tramo.
+      {BONUS_SSS['umbral']:.0%} +{BONUS_SSS['puntos']} (sin venta el año pasado en el tramo: más del
+      {BONUS_SSS_SIN_LY['umbral']:.0%} del presupuesto +{BONUS_SSS_SIN_LY['puntos']}). El 25/12 no tiene tramo.
       El bonus de fidelización se otorga al cerrar el tramo, con la fidelización que muestra la tabla.{aviso_correo}</div>""")
 
 
@@ -693,46 +704,68 @@ def vista_carga_ly():
         st.rerun()
 
 
+def _guardar_nacionales(nuevo: pd.DataFrame):
+    """Botón Guardar: guarda en GitHub, deja el mensaje para después del rerun y limpia lo pegado."""
+    try:
+        st.session_state["msg_nac"] = ("ok", guardar_boletas_nacionales(nuevo))
+        st.session_state["pegado_nac"] = ""
+        st.session_state["subida_nac"] = st.session_state.get("subida_nac", 0) + 1
+    except Exception as e:
+        st.session_state["msg_nac"] = ("error", f"No se guardó: {e}")
+
+
 def vista_carga_nacionales():
     """Carga de las boletas nacionales: base del % de fidelización en las tiendas de turistas."""
     actual, origen = boletas_nacionales()
-    origen = origen.replace("`", "")
-    resumen = (f"Hay {len(actual):,} días-tienda cargados ({actual['tienda'].nunique()} tiendas, del "
-               f"{actual['fecha'].min():%d/%m/%Y} al {actual['fecha'].max():%d/%m/%Y}) en {origen}."
-               if len(actual) else (f"Todavía no hay nada cargado. {origen}" if origen else "Todavía no hay nada cargado."))
-    html(f"""<div class="card"><div class="card-h">Boletas nacionales · carga manual</div>
-      <p class="reglas-p">En {", ".join(sorted(TIENDAS_FID_SOLO_DNI))} (muchos turistas) el % de fidelización se mide
-      solo con los peruanos: <b>boletas con DNI y correo válido ÷ total de boletas nacionales del día</b>. Descarga la
-      plantilla (una fila por tienda y una columna por día, como la tabla dinámica de «Cuenta de N° tarjeta» con el
-      filtro «Nacional»), completa los días y súbela. También se puede pegar la tabla dinámica tal cual. Un día sin
-      boletas nacionales cargadas se mide como antes (boletas con DNI de ventas_bi). Subir de nuevo los mismos días
-      los reemplaza.</p><p class="reglas-p">{resumen}</p></div>""")
-    st.download_button("⬇️ Descargar plantilla de boletas nacionales (Excel)", plantilla_boletas(actual),
-                       "plantilla_boletas_nacionales.xlsx",
-                       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-    archivo = st.file_uploader("Archivo de boletas nacionales", type=["xlsx", "xls", "csv"], key="archivo_nac")
-    if archivo is None:
-        return
-    try:
-        nuevo, desconocidas = leer_archivo_boletas(archivo, archivo.name)
-    except Exception as e:
-        st.error(f"No se pudo leer el archivo: {e}")
-        return
-    if desconocidas:
-        st.warning("Estas tiendas no son de turistas y se ignoran: " + ", ".join(desconocidas[:20]))
-    if nuevo.empty:
-        st.error("El archivo no trae boletas de las tiendas de turistas.")
-        return
-    tabla = nuevo.pivot_table(index="tienda", columns=nuevo["fecha"].dt.strftime("%d/%m"), values="boletas",
-                              aggfunc="sum").reset_index()
-    st.dataframe(tabla, hide_index=True, use_container_width=True)
-    if st.button(f"Guardar {len(nuevo):,} días-tienda", type="primary", key="guardar_nac"):
+    tiendas = ", ".join(sorted(NOMBRE_REPORTE.get(t, t) for t in TIENDAS_FID_SOLO_DNI))
+    html(f"""<div class="card"><div class="card-h">Boletas nacionales · tiendas de turistas</div>
+      <p class="reglas-p">En {tiendas} el % de fidelización es <b>boletas con DNI y correo válido ÷ total de boletas
+      nacionales del día</b>. Para cargar el total de boletas nacionales:</p>
+      <ol class="reglas"><li>En Excel, en la tabla dinámica «Cuenta de N° tarjeta» con el filtro «Nacional», selecciona
+        <b>desde la fila de las fechas hasta la fila Total general</b> y cópiala (Ctrl+C).</li>
+        <li>Pégala en el cuadro de abajo (Ctrl+V). Puedes pegar todos los días: los ya cargados se reemplazan.</li>
+        <li>Revisa que salga ✅ (la suma de las tiendas cuadra con el Total general) y toca <b>Guardar</b>.</li></ol>
+      <p class="reglas-p">Se guarda en GitHub (<code>datos/boletas_nacionales.csv</code>): no se pierde aunque la app
+      se reinicie y queda el historial de cada carga. En un día con números, la tienda en blanco es 0.</p></div>""")
+    if config_github() is None:
+        st.error("⚠️ Falta configurar el guardado en GitHub: en Streamlit → Settings → Secrets agrega la sección "
+                 "`[github]` con `token`, `repo` y `branch` (ver README). Mientras tanto no se puede guardar.")
+    msg = st.session_state.pop("msg_nac", None)
+    if msg:
+        (st.success if msg[0] == "ok" else st.error)(msg[1])
+    texto = st.text_area("Pega aquí la tabla dinámica", height=180, key="pegado_nac",
+                         placeholder="1/11/2026\t2/11/2026\t3/11/2026 ...\nCLB CUSCO PLAZA\t9\t4\t3 ...\n"
+                                     "...\nTotal general\t64\t34\t39 ...")
+    with st.expander("¿Prefieres subir el archivo Excel con la tabla dinámica?"):
+        archivo = st.file_uploader("Excel o CSV", type=["xlsx", "xls", "csv"],
+                                   key=f"archivo_nac_{st.session_state.get('subida_nac', 0)}")
+    nuevo = None
+    if texto.strip() or archivo is not None:
         try:
-            st.success(guardar_boletas_nacionales(nuevo) + " Recargando…")
+            nuevo, avisos = (leer_texto_boletas(texto) if texto.strip() else
+                             leer_archivo_boletas(archivo, archivo.name))
         except Exception as e:
-            st.error(f"No se pudo guardar: {e}")
-            return
-        st.rerun()
+            st.error(f"No se pudo leer: {e}")
+        else:
+            for a in avisos:
+                (st.success if a.startswith("✅") else st.warning)(a)
+            if len(actual):
+                cruce = nuevo.merge(actual.assign(fecha=pd.to_datetime(actual["fecha"])), on=["fecha", "tienda"],
+                                    suffixes=("", "_antes"))
+                cambia = cruce[cruce["boletas"] != cruce["boletas_antes"]]
+                if len(cambia):
+                    st.info("Se corrigen " + ", ".join(
+                        f"{NOMBRE_REPORTE.get(r.tienda, r.tienda)} {r.fecha:%d/%m} ({r.boletas_antes:.0f} → {r.boletas:.0f})"
+                        for r in cambia.head(15).itertuples()) + ("…" if len(cambia) > 15 else ""))
+            html('<div class="card-h">Vista previa de lo que se va a guardar</div>')
+            st.dataframe(tabla_boletas(nuevo), hide_index=True, use_container_width=True)
+            st.button(f"💾 Guardar {len(nuevo):,} días-tienda", type="primary", on_click=_guardar_nacionales,
+                      args=(nuevo,), disabled=config_github() is None, use_container_width=True)
+    html(f'<div class="card-h">Ya cargado · {origen}</div>')
+    if len(actual):
+        st.dataframe(tabla_boletas(actual), hide_index=True, use_container_width=True)
+    else:
+        st.caption("Todavía no hay boletas nacionales cargadas.")
 
 
 # ---------- Pantalla ----------
@@ -745,6 +778,11 @@ interruptor_simulacion()
 secciones = ["Posiciones", "Competencias", "Calendario", "Reglas"]
 if st.query_params.get("diagnostico") == "1":
     secciones.append("Diagnóstico")
+# Carga de boletas nacionales: con ?boletas=1 (abre directo ahí) o junto al diagnóstico
+if st.query_params.get("boletas") == "1" or st.query_params.get("diagnostico") == "1":
+    secciones.append("Boletas nacionales")
+    if st.query_params.get("boletas") == "1":
+        st.session_state.setdefault("nav", "Boletas nacionales")
 vista = selector("Sección", secciones, "nav")
 if vista == "Posiciones":
     vista_posiciones()
@@ -755,8 +793,9 @@ elif vista == "Calendario":
     vista_calendario()
 elif vista == "Diagnóstico":
     vista_carga_ly()
-    vista_carga_nacionales()
     vista_diagnostico()
+elif vista == "Boletas nacionales":
+    vista_carga_nacionales()
 else:
     vista_reglas()
 pie()
