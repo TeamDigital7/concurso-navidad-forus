@@ -646,22 +646,35 @@ def vista_diagnostico():
         d["fid_ruc"], d["con_bi"] = d["tickets_fidelizados"], False
     if "tickets_base_fid" not in d:
         d["tickets_base_fid"] = d["tickets"]
+    html('<div class="card-h">Fidelización por tienda · para comparar con %Captura de Power BI</div>')
+    primero, ultimo = d["fecha"].min().date(), d["fecha"].max().date()
+    rango = st.date_input("Fechas (las mismas que en el BI)", (primero, ultimo), min_value=primero, max_value=ultimo,
+                          format="DD/MM/YYYY", key="diag_fechas")
+    desde, hasta = (rango[0], rango[-1]) if isinstance(rango, (tuple, list)) and rango else (primero, ultimo)
+    f = d["fecha"].dt.date
+    d = d[(f >= desde) & (f <= hasta)]
+    d["con_bi"] = d["con_bi"].fillna(False).astype(bool)
     t = d.groupby(["tienda", "casa"], as_index=False).agg(
-        tickets=("tickets", "sum"), base=("tickets_base_fid", "sum"), fidelizados=("tickets_fidelizados", "sum"),
-        fid_ruc=("fid_ruc", "sum"), dias=("fecha", "nunique"), dias_bi=("con_bi", "sum"))
+        base=("tickets_base_fid", "sum"), fidelizados=("tickets_fidelizados", "sum"),
+        tickets=("tickets", "sum"), fid_ruc=("fid_ruc", "sum"), dias=("fecha", "nunique"), dias_bi=("con_bi", "sum"))
     t["% fidelización (app)"] = t["fidelizados"] / t["base"].replace(0, np.nan)
     t["% regla RUC"] = t["fid_ruc"] / t["tickets"].replace(0, np.nan)
-    t["días con regla Power BI"] = t["dias_bi"].astype(int).astype(str) + " de " + t["dias"].astype(str)
-    t = t.rename(columns={"base": "base fidelización"})
-    t = t.sort_values(["casa", "tienda"])[["casa", "tienda", "tickets", "base fidelización", "% fidelización (app)",
-                                          "% regla RUC",
-                                          "días con regla Power BI"]]
-    html('<div class="card-h">Fidelización por tienda (todo el periodo)</div>')
+    t["días con correo"] = t["dias_bi"].astype(int).astype(str) + " de " + t["dias"].astype(str)
+    t = t.rename(columns={"base": "#Tickets (base)", "fidelizados": "Registros Mail",
+                          "tickets": "tickets de venta"})
+    t = t.sort_values(["casa", "tienda"])[["casa", "tienda", "#Tickets (base)", "Registros Mail",
+                                          "% fidelización (app)", "días con correo", "tickets de venta",
+                                          "% regla RUC"]]
+    st.caption("#Tickets y Registros Mail salen de ventas_bi como en el BI (en las tiendas de turistas, sobre las "
+               "boletas nacionales). En los días sin correo todavía, se estiman con el % de la tienda en sus días "
+               "con correo. Si «días con correo» no está completo, el BI puede no tener esos días aún.")
     st.dataframe(t, hide_index=True, use_container_width=True,
                  column_config={"% fidelización (app)": st.column_config.NumberColumn(format="percent"),
-                                "% regla RUC": st.column_config.NumberColumn(format="percent")})
+                                "% regla RUC": st.column_config.NumberColumn(format="percent"),
+                                "#Tickets (base)": st.column_config.NumberColumn(format="%d"),
+                                "Registros Mail": st.column_config.NumberColumn(format="%d")})
     st.download_button("⬇️ Descargar para comparar con Power BI (CSV)", t.to_csv(index=False).encode("utf-8"),
-                       "fidelizacion_por_tienda.csv", "text/csv")
+                       f"fidelizacion_{desde:%d%m}_{hasta:%d%m}.csv", "text/csv")
 
 
 def vista_carga_ly():

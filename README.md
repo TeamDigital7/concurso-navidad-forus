@@ -84,10 +84,11 @@ El correo sale de la primera tabla que lo tenga con ventas en el periodo, en est
 `fidelizacion_table` (secrets), `ventas_table` si es una ventas_bi, la tabla de venta si trae
 correo, `pe_bronze.stg_pe_perucentral_ventas_bi` y `bronze.stg_pe_central_ventas_bi`. Las columnas
 se detectan solas (o `fidelizacion_col_<campo>` en los secrets) y la fecha se lee aunque venga como
-texto (`2026-10-26`, `26/10/2026` o `20261026`). El % por día y tienda se aplica a los tickets de la
-venta; los días sin dato muestran el % con la regla por RUC/DNI, pero **el bonus de fidelización
-de un tramo no se otorga hasta tener el correo de todos sus días** (`puntos.puntos_por_tramo`,
-columna `fid_pendiente`): nadie gana ni pierde el bonus por un dato que todavía no llegó.
+texto (`2026-10-26`, `26/10/2026` o `20261026`). El % es igual a **%Captura** de Power BI: Registros Mail ÷ #Tickets, los
+dos contados en ventas_bi (`data.aplicar_fidelizacion`, columna `tickets_base_fid`), así que el % de varios
+días es la suma de fidelizados ÷ la suma de tickets. Los días que ventas_bi todavía no trae (llega con atraso)
+se estiman con el % de la misma tienda en sus días con correo (antes usaban la regla por RUC, que daba % muy
+altos); solo una tienda que ventas_bi no trae nunca queda con la regla por RUC.
 
 ### Tiendas de turistas: boletas nacionales
 

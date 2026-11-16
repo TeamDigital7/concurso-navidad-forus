@@ -262,26 +262,36 @@ def _leer_fidelizacion(client, cfg: dict, bigquery, inicio: date, fin: date,
 
 
 def aplicar_fidelizacion(venta: pd.DataFrame, fid: pd.DataFrame) -> pd.DataFrame:
-    """Reemplaza tickets_fidelizados por el % de ventas_bi aplicado a los tickets de la venta.
+    """Fidelización igual que %Captura de Power BI: Registros Mail ÷ #Tickets, los dos contados en ventas_bi.
 
-    Los días o tiendas que ventas_bi todavía no trae (llega con atraso) quedan con la regla por RUC.
+    En los días que ventas_bi trae, la base del % (tickets_base_fid) son sus tickets y los fidelizados sus
+    tickets con correo y Registro Válido (en las tiendas de turistas, solo las boletas con DNI peruano). Así el
+    % de varios días es la suma de fidelizados ÷ la suma de tickets, como el DIVIDE del BI.
+    Los días que ventas_bi todavía no trae (llega con atraso) usan el % de esa misma tienda en sus días con
+    correo; solo una tienda que ventas_bi no trae nunca queda con la regla por RUC.
     """
     v = venta.copy()
     v["fecha"] = pd.to_datetime(v["fecha"])
     v = v.merge(fid, on=["fecha", "tienda"], how="left")
-    tasa = v["fidelizados_bi"] / v["tickets_bi"].replace(0, np.nan)
-    # Tiendas de turistas: % sobre las boletas con DNI peruano (un día sin ninguna queda en 0)
-    solo_dni = v["tienda"].isin(TIENDAS_FID_SOLO_DNI) & v["tickets_bi"].notna()
-    tasa_dni = (v["fidelizados_dni"] / v["tickets_dni"].replace(0, np.nan)).fillna(0)
-    tasa = tasa.where(~solo_dni, tasa_dni)
     tickets = pd.to_numeric(v["tickets"], errors="coerce").astype(float)
     actual = pd.to_numeric(v["tickets_fidelizados"], errors="coerce").astype(float)
+    solo_dni = v["tienda"].isin(TIENDAS_FID_SOLO_DNI)
+    base_bi = v["tickets_bi"].where(~solo_dni, v["tickets_dni"])
+    fid_bi = v["fidelizados_bi"].where(~solo_dni, v["fidelizados_dni"])
+    con_bi = v["tickets_bi"].fillna(0) > 0
+    # % de la tienda en sus días con correo, para los días que todavía no llegan
+    suma = pd.DataFrame({"tienda": v["tienda"], "f": fid_bi.where(con_bi, 0), "b": base_bi.where(con_bi, 0)})
+    suma = suma.groupby("tienda")[["f", "b"]].sum()
+    tasa_tienda = v["tienda"].map(suma["f"] / suma["b"].replace(0, np.nan))
     # Para el diagnóstico: el resultado con la regla por RUC y qué días traen la regla de Power BI
     v["fid_ruc"] = actual
-    v["con_bi"] = tasa.notna()
+    v["con_bi"] = con_bi
+    v["tickets_bi_dia"] = v["tickets_bi"]
     # Boletas con DNI peruano y correo válido: el numerador cuando la base son las boletas nacionales
     v["fid_dni"] = v["fidelizados_dni"]
-    v["tickets_fidelizados"] = np.where(tasa.notna(), (tickets * tasa).round(), actual)
+    estimado = (tickets * tasa_tienda).round()
+    v["tickets_fidelizados"] = np.where(con_bi, fid_bi.fillna(0), np.where(tasa_tienda.notna(), estimado, actual))
+    v["tickets_base_fid"] = np.where(con_bi, base_bi.fillna(0), tickets)
     return v.drop(columns=["tickets_bi", "fidelizados_bi", "tickets_dni", "fidelizados_dni"])
 
 
@@ -946,7 +956,8 @@ def aplicar_boletas_nacionales(df: pd.DataFrame, nac: pd.DataFrame) -> pd.DataFr
     Los tickets de venta (ticket promedio, UPT) no cambian."""
     attrs = df.attrs
     df = df.copy()
-    df["tickets_base_fid"] = df["tickets"]
+    if "tickets_base_fid" not in df:
+        df["tickets_base_fid"] = df["tickets"]
     if nac.empty or df.empty:
         df.attrs = attrs
         return df
@@ -954,7 +965,7 @@ def aplicar_boletas_nacionales(df: pd.DataFrame, nac: pd.DataFrame) -> pd.DataFr
     n = n.groupby(["fecha", "tienda"], as_index=False)["boletas"].sum().rename(columns={"boletas": "_nac"})
     df = df.merge(n, on=["fecha", "tienda"], how="left")
     hay = df["_nac"].notna() & df["tienda"].isin(TIENDAS_FID_SOLO_DNI)
-    tasa = (df["tickets_fidelizados"] / df["tickets"].replace(0, np.nan)).fillna(0)
+    tasa = (df["tickets_fidelizados"] / df["tickets_base_fid"].replace(0, np.nan)).fillna(0)
     fid = (tasa * df["_nac"]).round()
     if "fid_dni" in df:
         fid = df["fid_dni"].where(df["fid_dni"].notna(), fid)
