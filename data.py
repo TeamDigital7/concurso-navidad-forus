@@ -266,7 +266,15 @@ def _leer_fidelizacion(client, cfg: dict, bigquery, inicio: date, fin: date,
             break
     else:
         return None, "Ninguna tabla trae el correo del cliente para el periodo.", intentos
+    claves = sorted(fid["clave"].astype(str).unique())
     fid = _traducir_tiendas(client, bigquery, fid, tabla_venta, params)
+    fid["tienda"] = fid["tienda"].astype(str).str.strip().str.upper()
+    # Para el diagnóstico: cuántas tiendas del concurso cruzan con la tabla del correo
+    cruzan = sorted(set(fid["tienda"]) & set(TIENDA_A_CASA))
+    no_cruzan = sorted(set(fid["tienda"]) - set(TIENDA_A_CASA))
+    intentos[-1]["tiendas"] = (f"{len(cruzan)} de {len(TIENDA_A_CASA)} tiendas del concurso"
+                               + (f" · ejemplos sin cruce: {', '.join(no_cruzan[:6])}" if not cruzan else "")
+                               + (f" · valores de la columna tienda: {', '.join(claves[:6])}" if not cruzan else ""))
     fid["fecha"] = pd.to_datetime(fid["fecha"])
     cols = ["tickets_bi", "fidelizados_bi", "tickets_dni", "fidelizados_dni"]
     for c in cols:

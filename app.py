@@ -637,10 +637,10 @@ def vista_diagnostico():
         filas = "".join(
             f"<tr><td><b>{i['tabla']}</b></td><td class='{'pos' if i['estado'] == 'en uso' else 'neg'}'>{i['estado']}</td>"
             f"<td><small>{', '.join(f'{k}: {v}' for k, v in i.get('columnas', {}).items()) or '–'}</small></td>"
-            f"<td>{_rango(i)}</td></tr>"
+            f"<td>{_rango(i)}</td><td><small>{i.get('tiendas', '–')}</small></td></tr>"
             for i in intentos)
         html(f"""<div class="std-wrap interior"><table class="std"><thead><tr><th>TABLA PROBADA</th><th>RESULTADO</th>
-          <th>COLUMNAS USADAS</th><th>FECHAS</th></tr></thead><tbody>{filas}</tbody></table></div>""")
+          <th>COLUMNAS USADAS</th><th>FECHAS</th><th>TIENDAS QUE CRUZAN</th></tr></thead><tbody>{filas}</tbody></table></div>""")
     d = df_all.copy()
     if "fid_ruc" not in d:
         d["fid_ruc"], d["con_bi"] = d["tickets_fidelizados"], False
