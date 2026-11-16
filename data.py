@@ -101,7 +101,7 @@ ALIAS_BI = {
     "documento": ["nrodoc_lv", "nrodoc", "nro_documento", "numero_documento", "num_documento",
                   "nro_doc", "num_doc", "documento", "nro_boleta", "folio", "nro_comprobante",
                   "numero_comprobante", "id_ticket", "ticket", "id_transaccion", "transaccion"],
-    "tipo_documento": ["tipdoc_lv", "tipdoc", "tipo_documento", "tipo_doc", "tipo_comprobante"],
+    "tipo_documento": ["tipdoc_lv", "tipdoc", "tipodoc", "tipo_documento", "tipo_doc", "tipo_comprobante"],
     "ruc": ["ruc_cliente", "rutcli_lv", "rut_cliente", "dni_cliente", "doc_cliente",
             "documento_cliente", "nro_documento_cliente"],
     "correo": ["correo_cliente", "email_cliente", "mail_cliente", "correo", "email", "mail"],
@@ -116,7 +116,7 @@ SELECT {fecha} AS fecha, UPPER(TRIM(CAST({tienda} AS STRING))) AS clave,
        COUNT(DISTINCT IF({dni}, {ticket}, NULL)) AS tickets_dni,
        COUNT(DISTINCT IF({dni} AND {valido} AND {correo_ok}, {ticket}, NULL)) AS fidelizados_dni
 FROM `{tabla}`
-WHERE {fecha} BETWEEN @inicio AND @fin
+WHERE {fecha} BETWEEN @inicio AND @fin{solo_boletas}
 GROUP BY 1, 2
 """
 
@@ -171,7 +171,12 @@ def _sql_fecha(col: str, tipo: str) -> str:
     return f"DATE({col})"
 
 
-def sql_fidelizacion(tabla: str, mapa: dict[str, str], columnas: dict[str, str]) -> str:
+# Como %Captura de Power BI, solo cuentan las boletas: facturas (FV, RUC de empresa) y notas de crédito (NC)
+# no entran en #Tickets. Se cambia con fidelizacion_tipos_documento en los secrets.
+TIPOS_DOC_FIDELIZACION = ("BL",)
+
+
+def sql_fidelizacion(tabla: str, mapa: dict[str, str], columnas: dict[str, str], tipos=TIPOS_DOC_FIDELIZACION) -> str:
     correo = f"LOWER(TRIM(IFNULL(CAST(`{mapa['correo']}` AS STRING), '')))"
     condiciones = [
         f"NOT STARTS_WITH({correo}, 'be@')",
@@ -185,7 +190,10 @@ def sql_fidelizacion(tabla: str, mapa: dict[str, str], columnas: dict[str, str])
     return SQL_FIDELIZACION.format(
         tabla=tabla, tienda=f"`{mapa['tienda']}`", ticket=ticket, valido=" AND ".join(condiciones),
         dni=sql_dni_peruano(f"`{mapa['ruc']}`"), correo_ok=f"REGEXP_CONTAINS({correo}, r'{CORREO_FORMATO}')",
-        fecha=_sql_fecha(f"`{mapa['fecha']}`", columnas.get(mapa["fecha"], "DATE")))
+        fecha=_sql_fecha(f"`{mapa['fecha']}`", columnas.get(mapa["fecha"], "DATE")),
+        solo_boletas=(f"\n  AND UPPER(TRIM(CAST(`{mapa['tipo_documento']}` AS STRING))) IN ("
+                      + ", ".join(f"'{str(t).upper()}'" for t in tipos) + ")"
+                      if tipos and "tipo_documento" in mapa else ""))
 
 
 def _codigo(x) -> str:
@@ -222,9 +230,16 @@ def _probar_tabla_bi(client, cfg: dict, bigquery, tabla: str, params) -> tuple[p
     if faltan:
         intento["estado"] = f"sin columna de {', '.join(faltan)}"
         return None, intento
+    tipos = tuple(cfg.get("fidelizacion_tipos_documento") or TIPOS_DOC_FIDELIZACION)
     try:
-        fid = client.query(sql_fidelizacion(tabla, mapa, columnas),
+        fid = client.query(sql_fidelizacion(tabla, mapa, columnas, tipos),
                            job_config=bigquery.QueryJobConfig(query_parameters=params)).to_dataframe()
+        intento["columnas"] = {**mapa, "solo documentos": ", ".join(tipos)} if "tipo_documento" in mapa else mapa
+        if fid.empty and "tipo_documento" in mapa:
+            # La tabla usa otros códigos de documento: se cuentan todos antes que quedarse sin dato
+            fid = client.query(sql_fidelizacion(tabla, mapa, columnas, ()),
+                               job_config=bigquery.QueryJobConfig(query_parameters=params)).to_dataframe()
+            intento["columnas"] = {**mapa, "solo documentos": f"todos (no hay {', '.join(tipos)})"}
     except Exception as e:
         intento["estado"] = f"falló la consulta ({type(e).__name__}: {str(e)[:160]})"
         return None, intento

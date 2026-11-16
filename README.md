@@ -85,7 +85,9 @@ El correo sale de la primera tabla que lo tenga con ventas en el periodo, en est
 correo, `pe_bronze.stg_pe_perucentral_ventas_bi` y `bronze.stg_pe_central_ventas_bi`. Las columnas
 se detectan solas (o `fidelizacion_col_<campo>` en los secrets) y la fecha se lee aunque venga como
 texto (`2026-10-26`, `26/10/2026` o `20261026`). El % es igual a **%Captura** de Power BI: Registros Mail ÷ #Tickets, los
-dos contados en ventas_bi (`data.aplicar_fidelizacion`, columna `tickets_base_fid`), así que el % de varios
+dos contados en ventas_bi (`data.aplicar_fidelizacion`, columna `tickets_base_fid`) y **solo con boletas** (tipo de
+documento BL, `data.TIPOS_DOC_FIDELIZACION` o `fidelizacion_tipos_documento` en los secrets): facturas (FV) y
+notas de crédito (NC) no entran en #Tickets, igual que en el BI, así que el % de varios
 días es la suma de fidelizados ÷ la suma de tickets. Los días que ventas_bi todavía no trae (llega con atraso)
 se estiman con el % de la misma tienda en sus días con correo (antes usaban la regla por RUC, que daba % muy
 altos); solo una tienda que ventas_bi no trae nunca queda con la regla por RUC.
