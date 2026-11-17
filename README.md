@@ -56,7 +56,7 @@ Settings → Secrets de Streamlit Cloud:
 
 Con `[bigquery]` y `[gcp_service_account]` en los secrets, `data.py` lee la venta de la misma tabla que usa
 Power BI para 'perucentral ventas_bi': `forus-analitica-prod-datalake.pe_landing.central_ventas_bi`
-(`data._leer_venta_bi`; otra con `ventas_bi_table` en los secrets). Venta = `SUM(venta)` (bruta, con IGV),
+(`data._leer_venta_bi`; otra con `ventas_bi_table` en los secrets). Venta = `SUM(venta)` (bruta, con IGV) sin pedidos ecommerce (`ordenecommerce` con dato),
 tickets = documentos distintos (`tipodoc` + `codigo_factura`) sin notas de crédito, unidades = `SUM(unidades)`,
 fecha = `fecha` o `registro`, tienda = `codigo_tienda` traducido al nombre con `nlocal_lv` de
 `silver.ft_pe_venta_retail`. La venta del año pasado sale de la misma tabla 364 días antes y, los días que no
