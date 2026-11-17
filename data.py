@@ -86,6 +86,8 @@ WHERE a.fecha BETWEEN @inicio AND @fin
 # Se usa la primera que tenga las columnas y ventas en el periodo; ft_pe_venta_retail entra primero
 # si resulta traer el correo (así se usan exactamente los mismos tickets que la venta).
 TABLAS_BI = [
+    # Tabla de BigQuery de la que Power BI carga 'perucentral ventas_bi' (con correo_cliente)
+    "forus-analitica-prod-datalake.pe_landing.central_ventas_bi",
     "forus-analitica-prod-datalake.pe_bronze.stg_pe_perucentral_ventas_bi",
     "forus-analitica-prod-datalake.bronze.stg_pe_central_ventas_bi",
 ]
@@ -94,12 +96,12 @@ CORREOS_EXCLUIDOS = r"ecommerce@|xxx@|@forus"
 # pueden fijar en los secrets con fidelizacion_col_<campo> (p. ej. fidelizacion_col_correo).
 ALIAS_BI = {
     "fecha": ["fecha_transaccion", "fecha", "fecha_venta", "fecmov_lv", "fecmov", "fecha_documento",
-              "fecha_emision", "fecha_comprobante", "fec_doc", "fecha_dia", "dia"],
+              "fecha_emision", "fecha_comprobante", "fec_doc", "fecha_dia", "dia", "registro"],
     "tienda": ["nombre_tienda", "nombre_local", "tienda_nombre", "local_nombre", "desc_local",
                "descripcion_local", "nombre_loc", "codigo_local", "cod_local", "nlocal_lv", "nlocal",
                "local", "codigo_tienda", "cod_tienda", "id_local", "id_tienda", "tienda"],
     "documento": ["nrodoc_lv", "nrodoc", "nro_documento", "numero_documento", "num_documento",
-                  "nro_doc", "num_doc", "documento", "nro_boleta", "folio", "nro_comprobante",
+                  "nro_doc", "num_doc", "documento", "codigo_factura", "nro_boleta", "folio", "nro_comprobante",
                   "numero_comprobante", "id_ticket", "ticket", "id_transaccion", "transaccion"],
     "tipo_documento": ["tipdoc_lv", "tipdoc", "tipodoc", "tipo_documento", "tipo_doc", "tipo_comprobante"],
     "ruc": ["ruc_cliente", "rutcli_lv", "rut_cliente", "dni_cliente", "doc_cliente",
@@ -168,6 +170,8 @@ def _sql_fecha(col: str, tipo: str) -> str:
                 f"SAFE.PARSE_DATE('%Y%m%d', LEFT({t}, 8)))")
     if tipo in ("INT64", "NUMERIC", "BIGNUMERIC"):  # 20261025
         return f"SAFE.PARSE_DATE('%Y%m%d', CAST({col} AS STRING))"
+    if tipo == "TIMESTAMP":  # hora en UTC: el día es el de Lima
+        return f"DATE({col}, 'America/Lima')"
     return f"DATE({col})"
 
 

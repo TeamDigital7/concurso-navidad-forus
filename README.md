@@ -81,7 +81,7 @@ Válido"): el correo debe tener `@` y no empezar con `be@` ni contener `ecommerc
 pasaporte) cuenta como válido.
 
 El correo sale de la primera tabla que lo tenga con ventas en el periodo, en este orden:
-`fidelizacion_table` (secrets), `ventas_table` si es una ventas_bi, la tabla de venta si trae
+`fidelizacion_table` (secrets), `pe_landing.central_ventas_bi` (la que usa Power BI), `ventas_table` si es una ventas_bi, la tabla de venta si trae
 correo, `pe_bronze.stg_pe_perucentral_ventas_bi` y `bronze.stg_pe_central_ventas_bi`. Las columnas
 se detectan solas (o `fidelizacion_col_<campo>` en los secrets) y la fecha se lee aunque venga como
 texto (`2026-10-26`, `26/10/2026` o `20261026`). El % es igual a **%Captura** de Power BI: Registros Mail ÷ #Tickets, los
