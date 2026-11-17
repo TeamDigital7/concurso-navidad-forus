@@ -445,6 +445,8 @@ ALIAS_VENTA_BI = {
     "tipo_documento": ALIAS_BI["tipo_documento"], "ruc": ALIAS_BI["ruc"],
     "venta": ["venta", "venta_total", "venta_con_igv", "venta_con_iva", "venta_bruta", "monto"],
     "unidades": ["unidades", "unidades_venta", "cantidad"],
+    # Pedidos ecommerce: no son venta de la tienda (el concurso mide solo la venta del propio retail)
+    "ecommerce": ["ordenecommerce", "orden_ecommerce", "pedido_ecommerce", "nro_orden_ecommerce"],
 }
 OBLIGATORIAS_VENTA_BI = ("fecha", "tienda", "documento", "venta")
 # Notas de crédito: restan venta y unidades, pero no son tickets
@@ -456,7 +458,7 @@ WITH base AS (
          {tipo} AS tipo, SAFE_CAST({venta} AS FLOAT64) AS venta, SAFE_CAST({unidades} AS FLOAT64) AS unidades,
          {ruc_valido} AS ruc_ok
   FROM `{tabla}`
-  WHERE {fecha} BETWEEN DATE_SUB(@inicio, INTERVAL 364 DAY) AND @fin
+  WHERE {fecha} BETWEEN DATE_SUB(@inicio, INTERVAL 364 DAY) AND @fin{sin_ecommerce}
 ),
 dia AS (
   SELECT fecha, clave, SUM(venta) AS venta, SUM(unidades) AS unidades,
@@ -495,7 +497,9 @@ def _leer_venta_bi(client, bigquery, cfg: dict, tabla: str, tabla_venta: str, pa
         tabla=tabla, fecha=_sql_fecha(f"`{mapa['fecha']}`", columnas.get(mapa["fecha"], "DATE")),
         tienda=f"`{mapa['tienda']}`", ticket=ticket, tipo=tipo, venta=f"`{mapa['venta']}`",
         unidades=f"`{mapa['unidades']}`" if "unidades" in mapa else "0",
-        ruc_valido=sql_ruc_valido(f"`{mapa['ruc']}`") if "ruc" in mapa else "FALSE")
+        ruc_valido=sql_ruc_valido(f"`{mapa['ruc']}`") if "ruc" in mapa else "FALSE",
+        sin_ecommerce=(f"\n    AND TRIM(IFNULL(CAST(`{mapa['ecommerce']}` AS STRING), '')) = ''"
+                       if "ecommerce" in mapa else ""))
     venta = client.query(sql, job_config=bigquery.QueryJobConfig(query_parameters=params + [
         bigquery.ArrayQueryParameter("no_ticket", "STRING", list(TIPOS_NO_TICKET))])).to_dataframe()
     if venta.empty:
@@ -521,7 +525,8 @@ def _leer_venta_bi(client, bigquery, cfg: dict, tabla: str, tabla_venta: str, pa
             venta = venta.drop(columns="_ly")
         except Exception:
             pass
-    venta.attrs["col_venta"] = mapa["venta"]
+    venta.attrs["col_venta"] = mapa["venta"] + (f" sin pedidos ecommerce ({mapa['ecommerce']} con dato)"
+                                                 if "ecommerce" in mapa else "")
     return venta
 
 
