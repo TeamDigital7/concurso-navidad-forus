@@ -96,7 +96,8 @@ documento BL, `data.TIPOS_DOC_FIDELIZACION` o `fidelizacion_tipos_documento` en 
 notas de crédito (NC) no entran en #Tickets, igual que en el BI, así que el % de varios
 días es la suma de fidelizados ÷ la suma de tickets. Los días que ventas_bi todavía no trae (llega con atraso)
 se estiman con el % de la misma tienda en sus días con correo (antes usaban la regla por RUC, que daba % muy
-altos); solo una tienda que ventas_bi no trae nunca queda con la regla por RUC.
+altos). **Sin DNI + correo no hay cliente fidelizado**: una tienda que ventas_bi no trae nunca queda en 0, y
+si no se puede leer ninguna tabla con correo, la fidelización de todas queda en 0 (no se usa la regla por RUC sola).
 
 ### Tiendas de turistas: boletas nacionales
 

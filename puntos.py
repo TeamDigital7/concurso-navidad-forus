@@ -63,7 +63,7 @@ def puntos_por_tramo(df: pd.DataFrame, hasta=None) -> pd.DataFrame:
     # El bonus de fidelización espera a tener el correo de todos los días del tramo: nadie lo gana
     # ni lo pierde por un dato que todavía no llegó. Pero no espera para siempre: si a los
     # ESPERA_CORREO_DIAS de cerrado el tramo ventas_bi sigue sin esos días (o no trae la tienda),
-    # se usa la fidelización que ya se muestra (regla por RUC en los días sin correo).
+    # se usa la fidelización que ya se muestra (estimada con el % de la tienda en sus días con correo).
     g["fid_pendiente"] = g["dias_sin_correo"] > 0
     if hasta is not None:
         g["fid_pendiente"] &= g["fin"] > pd.Timestamp(hasta).date() - pd.Timedelta(days=ESPERA_CORREO_DIAS)
