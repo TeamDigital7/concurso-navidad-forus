@@ -632,6 +632,11 @@ def vista_diagnostico():
       Regla de Power BI: el ticket cuenta solo si tiene <b>correo válido</b> (con @, sin <i>be@</i>, <i>ecommerce@</i>,
       <i>xxx@</i> ni <i>@forus</i>) <b>y RUC/DNI válido</b> (no vacío, no solo ceros y menor a 99999991). Regla de
       respaldo (días sin tabla con correo): solo el RUC/DNI válido.</p></div>""")
+    col_venta, aviso_venta = df_all.attrs.get("col_venta"), df_all.attrs.get("aviso_venta")
+    if col_venta or aviso_venta:
+        html(f"""<div class="card"><div class="card-h">Venta · de dónde sale</div>
+          <p class="reglas-p">{"⚠️ " + aviso_venta if aviso_venta else "✅"} Venta bruta: <b>{col_venta or "–"}</b>.
+          Tickets = documentos distintos sin notas de crédito.</p></div>""")
     intentos = df_all.attrs.get("fidelizacion_intentos", [])
     if intentos:
         filas = "".join(

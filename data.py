@@ -438,6 +438,93 @@ def _col_venta_bruta(client, bigquery, cfg: dict, tabla: str) -> str:
                        "Fíjala en los secrets con ventas_col_monto.")
 
 
+# ---------- Venta desde la tabla de Power BI ----------
+TABLA_VENTAS_BI = "forus-analitica-prod-datalake.pe_landing.central_ventas_bi"
+ALIAS_VENTA_BI = {
+    "fecha": ALIAS_BI["fecha"], "tienda": ALIAS_BI["tienda"], "documento": ALIAS_BI["documento"],
+    "tipo_documento": ALIAS_BI["tipo_documento"], "ruc": ALIAS_BI["ruc"],
+    "venta": ["venta", "venta_total", "venta_con_igv", "venta_con_iva", "venta_bruta", "monto"],
+    "unidades": ["unidades", "unidades_venta", "cantidad"],
+}
+OBLIGATORIAS_VENTA_BI = ("fecha", "tienda", "documento", "venta")
+# Notas de crédito: restan venta y unidades, pero no son tickets
+TIPOS_NO_TICKET = ("NC",)
+
+SQL_VENTA_BI = """
+WITH base AS (
+  SELECT {fecha} AS fecha, UPPER(TRIM(CAST({tienda} AS STRING))) AS clave, {ticket} AS ticket,
+         {tipo} AS tipo, SAFE_CAST({venta} AS FLOAT64) AS venta, SAFE_CAST({unidades} AS FLOAT64) AS unidades,
+         {ruc_valido} AS ruc_ok
+  FROM `{tabla}`
+  WHERE {fecha} BETWEEN DATE_SUB(@inicio, INTERVAL 364 DAY) AND @fin
+),
+dia AS (
+  SELECT fecha, clave, SUM(venta) AS venta, SUM(unidades) AS unidades,
+         COUNT(DISTINCT IF(tipo NOT IN UNNEST(@no_ticket), ticket, NULL)) AS tickets,
+         COUNT(DISTINCT IF(tipo NOT IN UNNEST(@no_ticket) AND ruc_ok, ticket, NULL)) AS tickets_fidelizados
+  FROM base
+  GROUP BY 1, 2
+)
+SELECT a.fecha, a.clave, a.venta, IFNULL(ly.venta, 0) AS venta_ly, a.tickets, a.tickets_fidelizados, a.unidades
+FROM dia a
+LEFT JOIN dia ly ON ly.clave = a.clave AND ly.fecha = DATE_SUB(a.fecha, INTERVAL 364 DAY)
+WHERE a.fecha BETWEEN @inicio AND @fin
+"""
+
+
+def _leer_venta_bi(client, bigquery, cfg: dict, tabla: str, tabla_venta: str, params) -> pd.DataFrame:
+    """Venta diaria por tienda de central_ventas_bi (la tabla de 'perucentral ventas_bi' en Power BI).
+
+    venta = SUM(venta) (bruta, con IGV); tickets = documentos distintos (tipodoc + codigo_factura) sin notas
+    de crédito; unidades = SUM(unidades). La tienda viene por código y se traduce al nombre con la tabla
+    de venta retail. La venta del año pasado sale de la misma tabla (364 días antes); los días que no tiene,
+    de ft_pe_venta_retail."""
+    columnas = _columnas(client, bigquery, tabla)
+    if not columnas:
+        raise RuntimeError("la tabla no existe o no se puede leer")
+    mapa = _mapear(cfg, "ventas_bi_col", ALIAS_VENTA_BI, columnas)
+    faltan = [c for c in OBLIGATORIAS_VENTA_BI if c not in mapa]
+    if faltan:
+        raise RuntimeError(f"sin columna de {', '.join(faltan)}")
+    tipo = (f"UPPER(TRIM(IFNULL(CAST(`{mapa['tipo_documento']}` AS STRING), '')))" if "tipo_documento" in mapa
+            else "''")
+    ticket = f"CAST(`{mapa['documento']}` AS STRING)"
+    if "tipo_documento" in mapa:
+        ticket = f"CONCAT({tipo}, '|', {ticket})"
+    sql = SQL_VENTA_BI.format(
+        tabla=tabla, fecha=_sql_fecha(f"`{mapa['fecha']}`", columnas.get(mapa["fecha"], "DATE")),
+        tienda=f"`{mapa['tienda']}`", ticket=ticket, tipo=tipo, venta=f"`{mapa['venta']}`",
+        unidades=f"`{mapa['unidades']}`" if "unidades" in mapa else "0",
+        ruc_valido=sql_ruc_valido(f"`{mapa['ruc']}`") if "ruc" in mapa else "FALSE")
+    venta = client.query(sql, job_config=bigquery.QueryJobConfig(query_parameters=params + [
+        bigquery.ArrayQueryParameter("no_ticket", "STRING", list(TIPOS_NO_TICKET))])).to_dataframe()
+    if venta.empty:
+        raise RuntimeError("no trae venta en el periodo")
+    venta = _traducir_tiendas(client, bigquery, venta, tabla_venta, params)
+    venta["tienda"] = venta["tienda"].astype(str).str.strip().str.upper()
+    for c in ("venta", "venta_ly", "tickets", "tickets_fidelizados", "unidades"):
+        venta[c] = pd.to_numeric(venta[c], errors="coerce").astype(float).fillna(0.0)
+    venta = venta.groupby(["fecha", "tienda"], as_index=False).sum(numeric_only=True)
+    if not venta["tienda"].isin(list(TIENDA_A_CASA)).any():
+        raise RuntimeError("ninguna tienda cruza con las del concurso")
+    venta["fecha"] = pd.to_datetime(venta["fecha"])
+    # Año pasado: los días que esta tabla no tiene se completan con ft_pe_venta_retail
+    if (venta["venta_ly"] <= 0).any():
+        try:
+            ly = client.query(SQL_VENTA.format(tabla=tabla_venta, col_venta=_col_venta_bruta(client, bigquery, cfg, tabla_venta),
+                                               ruc_valido="FALSE"),
+                              job_config=bigquery.QueryJobConfig(query_parameters=params + [
+                                  bigquery.ArrayQueryParameter("tiendas", "STRING", list(TIENDA_A_CASA))])).to_dataframe()
+            ly = ly.assign(fecha=pd.to_datetime(ly["fecha"]), _ly=pd.to_numeric(ly["venta_ly"], errors="coerce"))
+            venta = venta.merge(ly[["fecha", "tienda", "_ly"]], on=["fecha", "tienda"], how="left")
+            venta["venta_ly"] = venta["venta_ly"].where(venta["venta_ly"] > 0, venta["_ly"].fillna(0.0))
+            venta = venta.drop(columns="_ly")
+        except Exception:
+            pass
+    venta.attrs["col_venta"] = mapa["venta"]
+    return venta
+
+
 def _leer_bigquery(cfg: dict, inicio: date = INICIO, fin: date = FIN) -> pd.DataFrame:
     from google.cloud import bigquery
     from google.oauth2 import service_account
@@ -446,19 +533,30 @@ def _leer_bigquery(cfg: dict, inicio: date = INICIO, fin: date = FIN) -> pd.Data
     client = bigquery.Client(project=cfg.get("job_project_id") or cfg.get("project_id"),
                              credentials=cred, location=cfg.get("location"))
     tabla_venta = cfg.get("ventas_retail_table", TABLA_VENTA_RETAIL)
-    col_monto = "" if cfg.get("ventas_query") else _col_venta_bruta(client, bigquery, cfg, tabla_venta)
-    # Una ventas_query propia en los secrets también se lleva a venta bruta
-    sql = str(cfg.get("ventas_query") or "").replace("venta_total_sin_iva", "venta_total_con_iva") or SQL_VENTA.format(
-        tabla=tabla_venta,
-        col_venta=col_monto,
-        ruc_valido=sql_ruc_valido("rutcli_lv"),
-    )
-    venta = client.query(sql, job_config=bigquery.QueryJobConfig(query_parameters=[
-        bigquery.ScalarQueryParameter("inicio", "DATE", inicio),
-        bigquery.ScalarQueryParameter("fin", "DATE", fin),
-        bigquery.ArrayQueryParameter("tiendas", "STRING", list(TIENDA_A_CASA)),
-        bigquery.ArrayQueryParameter("genericos", "STRING", list(CLIENTES_GENERICOS)),
-    ])).to_dataframe()
+    params = [bigquery.ScalarQueryParameter("inicio", "DATE", inicio),
+              bigquery.ScalarQueryParameter("fin", "DATE", fin)]
+    venta, col_monto, aviso_venta = None, "", ""
+    # La venta sale de la tabla que usa Power BI (central_ventas_bi); si no se puede, de ft_pe_venta_retail
+    tabla_bi_venta = str(cfg.get("ventas_bi_table") or TABLA_VENTAS_BI).strip("`")
+    if not cfg.get("ventas_query") and tabla_bi_venta.lower() not in ("", "no", "false"):
+        try:
+            venta = _leer_venta_bi(client, bigquery, cfg, tabla_bi_venta, tabla_venta, params)
+            col_monto = f"{venta.attrs.pop('col_venta')} de {tabla_bi_venta}"
+        except Exception as e:
+            venta = None
+            aviso_venta = f"No se pudo leer la venta de {tabla_bi_venta} ({type(e).__name__}: {str(e)[:200]}); se usa {tabla_venta}."
+    if venta is None:
+        col_monto = "" if cfg.get("ventas_query") else _col_venta_bruta(client, bigquery, cfg, tabla_venta)
+        # Una ventas_query propia en los secrets también se lleva a venta bruta
+        sql = str(cfg.get("ventas_query") or "").replace("venta_total_sin_iva", "venta_total_con_iva") or SQL_VENTA.format(
+            tabla=tabla_venta,
+            col_venta=col_monto,
+            ruc_valido=sql_ruc_valido("rutcli_lv"),
+        )
+        venta = client.query(sql, job_config=bigquery.QueryJobConfig(query_parameters=params + [
+            bigquery.ArrayQueryParameter("tiendas", "STRING", list(TIENDA_A_CASA)),
+            bigquery.ArrayQueryParameter("genericos", "STRING", list(CLIENTES_GENERICOS)),
+        ])).to_dataframe()
     ppto, aviso_ppto = _leer_presupuesto(client, cfg, bigquery, inicio, fin, tabla_venta)
     if "presupuesto" not in venta:
         if ppto is None:
@@ -478,6 +576,7 @@ def _leer_bigquery(cfg: dict, inicio: date = INICIO, fin: date = FIN) -> pd.Data
     venta.attrs["fidelizacion_intentos"] = intentos
     venta.attrs["presupuesto"] = aviso_ppto
     venta.attrs["col_venta"] = col_monto or "ventas_query de los secrets"
+    venta.attrs["aviso_venta"] = aviso_venta
     return venta
 
 
