@@ -295,7 +295,7 @@ def aplicar_fidelizacion(venta: pd.DataFrame, fid: pd.DataFrame) -> pd.DataFrame
     tickets con correo y Registro Válido (en las tiendas de turistas, solo las boletas con DNI peruano). Así el
     % de varios días es la suma de fidelizados ÷ la suma de tickets, como el DIVIDE del BI.
     Los días que ventas_bi todavía no trae (llega con atraso) usan el % de esa misma tienda en sus días con
-    correo; solo una tienda que ventas_bi no trae nunca queda con la regla por RUC.
+    correo; una tienda que ventas_bi no trae nunca queda en 0 (sin correo no hay cliente fidelizado).
     """
     v = venta.copy()
     v["fecha"] = pd.to_datetime(v["fecha"])
@@ -317,7 +317,9 @@ def aplicar_fidelizacion(venta: pd.DataFrame, fid: pd.DataFrame) -> pd.DataFrame
     # Boletas con DNI peruano y correo válido: el numerador cuando la base son las boletas nacionales
     v["fid_dni"] = v["fidelizados_dni"]
     estimado = (tickets * tasa_tienda).round()
-    v["tickets_fidelizados"] = np.where(con_bi, fid_bi.fillna(0), np.where(tasa_tienda.notna(), estimado, actual))
+    # Sin dato de correo no hay cliente fidelizado (hace falta DNI + correo): una tienda que la tabla del
+    # correo no trae nunca queda en 0, no con la regla por RUC/DNI sola
+    v["tickets_fidelizados"] = np.where(con_bi, fid_bi.fillna(0), np.where(tasa_tienda.notna(), estimado, 0.0))
     v["tickets_base_fid"] = np.where(con_bi, base_bi.fillna(0), tickets)
     return v.drop(columns=["tickets_bi", "fidelizados_bi", "tickets_dni", "fidelizados_dni"])
 
@@ -577,6 +579,8 @@ def _leer_bigquery(cfg: dict, inicio: date = INICIO, fin: date = FIN) -> pd.Data
     else:
         venta["fid_ruc"] = pd.to_numeric(venta["tickets_fidelizados"], errors="coerce")
         venta["con_bi"] = False
+        # Sin la tabla del correo no hay cliente fidelizado (DNI + correo): 0, no la regla por RUC sola
+        venta["tickets_fidelizados"] = 0.0
     venta.attrs["fidelizacion"] = (aviso, fid is not None)
     venta.attrs["fidelizacion_intentos"] = intentos
     venta.attrs["presupuesto"] = aviso_ppto

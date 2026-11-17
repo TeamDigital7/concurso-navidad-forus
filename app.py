@@ -630,8 +630,10 @@ def vista_diagnostico():
       <p class="reglas-p">{"✅" if regla_bi else "⚠️"} {aviso}</p>
       <p class="reglas-p">Ventas del {real[0]:%d/%m/%Y} al {real[1]:%d/%m/%Y}{" (simulación)" if simulacion else ""}.
       Regla de Power BI: el ticket cuenta solo si tiene <b>correo válido</b> (con @, sin <i>be@</i>, <i>ecommerce@</i>,
-      <i>xxx@</i> ni <i>@forus</i>) <b>y RUC/DNI válido</b> (no vacío, no solo ceros y menor a 99999991). Regla de
-      respaldo (días sin tabla con correo): solo el RUC/DNI válido.</p></div>""")
+      <i>xxx@</i> ni <i>@forus</i>) <b>y RUC/DNI válido</b> (no vacío, no solo ceros y menor a 99999991). Si falta
+      uno de los dos no es cliente fidelizado. Un día que todavía no trae el correo se estima con el % de la misma
+      tienda en sus días con correo; una tienda sin ningún dato de correo queda en 0. La columna «% regla RUC» es
+      solo de referencia.</p></div>""")
     col_venta, aviso_venta = df_all.attrs.get("col_venta"), df_all.attrs.get("aviso_venta")
     if col_venta or aviso_venta:
         html(f"""<div class="card"><div class="card-h">Venta · de dónde sale</div>
