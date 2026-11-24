@@ -1205,7 +1205,8 @@ def _normalizar(df: pd.DataFrame) -> pd.DataFrame:
     attrs = dict(df.attrs)
     df = df[df["casa"].notna()].reset_index(drop=True)
     df.attrs.update(attrs)
-    df.attrs["tiendas_sin_cruce"] = sin_cruce
+    # Como lista y no DataFrame: pandas compara los attrs al combinar tablas y un DataFrame ahí lo rompe
+    df.attrs["tiendas_sin_cruce"] = sin_cruce.assign(fecha=sin_cruce["fecha"].astype(str)).to_dict("records")
     extra, origen = venta_ly_extra()
     df = aplicar_venta_ly(df, extra)
     df.attrs["venta_ly_extra"] = (origen, len(extra))

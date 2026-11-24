@@ -389,13 +389,32 @@ def estado_competencias() -> list[dict]:
     return res
 
 
+def excel_seguro(*args) -> bytes:
+    """El Excel del concurso; si algo falla, un Excel con el error para poder corregirlo (y no un botón muerto)."""
+    try:
+        return excel_concurso(*args)
+    except Exception:
+        import io
+        import traceback
+        from openpyxl import Workbook
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Error"
+        ws["A1"] = "No se pudo armar el Excel. Envía este texto a quien mantiene la app:"
+        for i, linea in enumerate(traceback.format_exc().splitlines()[-30:], start=3):
+            ws.cell(row=i, column=1, value=linea)
+        buf = io.BytesIO()
+        wb.save(buf)
+        return buf.getvalue()
+
+
 def descarga_detalle(rank: pd.DataFrame, dias: pd.DataFrame, desde: date, hasta: date, clase: str,
                      pt: pd.DataFrame | None = None):
     # La clave termina en _solo-movil / _solo-pc: el CSS la muestra solo en ese dispositivo
     # El Excel se arma recién al tocar el botón (recibe la función): cambiar de pestaña no lo espera
     st.download_button("⬇️ Descargar detalle en Excel",
-                       lambda: excel_concurso(rank, dias, estado_competencias(), desde, hasta, bool(simulacion),
-                                              df_all.attrs.get("consultado"), pt),
+                       lambda: excel_seguro(rank, dias, estado_competencias(), desde, hasta, bool(simulacion),
+                                            df_all.attrs.get("consultado"), pt),
                        f"Forus-Caliz-detalle-{desde:%d%m}-al-{hasta:%d%m}.xlsx",
                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                        width="stretch", key=f"descarga_{clase}", on_click="ignore",
@@ -740,8 +759,8 @@ def vista_cuadre_venta():
     dinero = {c: st.column_config.NumberColumn(format="%.0f") for c in t.columns
               if c not in ("casa", "tienda", "días", "último día")}
     st.dataframe(t, hide_index=True, use_container_width=True, column_config=dinero)
-    sin_cruce = df_all.attrs.get("tiendas_sin_cruce")
-    if isinstance(sin_cruce, pd.DataFrame) and len(sin_cruce):
+    sin_cruce = pd.DataFrame(df_all.attrs.get("tiendas_sin_cruce") or [], columns=["fecha", "tienda", "venta"])
+    if len(sin_cruce):
         fs = pd.to_datetime(sin_cruce["fecha"]).dt.date
         s = (sin_cruce[(fs >= desde) & (fs <= hasta)].groupby("tienda", as_index=False)["venta"].sum()
              .sort_values("venta", ascending=False))
