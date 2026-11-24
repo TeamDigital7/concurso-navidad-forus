@@ -74,7 +74,7 @@ tiene, de `ft_pe_venta_retail`. Si `central_ventas_bi` no se puede leer, toda la
 
 Las tiendas se cruzan por nombre con `concurso.TIENDAS`; 83 de las 90 coinciden con el maestro
 de tiendas de ForusIQ. Los outlets del Jockey (VANS OUTLET JOCKEY y CLB OUTLET JOCKEY) vienen con otro nombre
-en la tabla de venta: `data.nombre_concurso` los reconoce (marca + OUTLET, `concurso.ALIAS_TIENDAS_VENTA`). Para
+en la tabla de venta (CLB PREMIUM OUTLET JP y VNS PREMIUM OUTLET JP): `data.nombre_concurso` los reconoce (marca + OUTLET, `concurso.ALIAS_TIENDAS_VENTA`). Para
 cualquier otra tienda que no cruce, se agrega su nombre o código de la tabla en `[alias_tiendas]` de los secrets
 (Diagnóstico → cuadre de venta muestra cuáles son).
 

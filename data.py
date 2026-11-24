@@ -227,11 +227,15 @@ def nombre_concurso(nombre, alias: dict[str, str] | None = None) -> str:
         return ALIAS_TIENDAS_VENTA[s]
     # Marca + OUTLET (+ JOCKEY / PLAZA): los outlets del Jockey, se llamen como se llamen en la tabla
     palabras = set(s.split())
-    if "OUTLET" in palabras and palabras - {"OUTLET", "JOCKEY", "PLAZA", "JP"} <= set(OUTLETS_JOCKEY):
+    if "OUTLET" in palabras and palabras - {"OUTLET", "PREMIUM", "JOCKEY", "PLAZA", "JP"} <= set(OUTLETS_JOCKEY):
         marca = next((m for m in OUTLETS_JOCKEY if m in palabras), None)
         if marca:
             return OUTLETS_JOCKEY[marca]
     return s
+
+
+# Nombres a pedir a ft_pe_venta_retail: los del concurso y los alias con que vienen en la tabla
+NOMBRES_EN_TABLA = list(TIENDA_A_CASA) + list(ALIAS_TIENDAS_VENTA)
 
 
 def _traducir_tiendas(client, bigquery, df: pd.DataFrame, tabla_venta: str, params) -> pd.DataFrame:
@@ -557,8 +561,10 @@ def _leer_venta_bi(client, bigquery, cfg: dict, tabla: str, tabla_venta: str, pa
             ly = client.query(SQL_VENTA.format(tabla=tabla_venta, col_venta=_col_venta_bruta(client, bigquery, cfg, tabla_venta),
                                                ruc_valido="FALSE"),
                               job_config=bigquery.QueryJobConfig(query_parameters=params + [
-                                  bigquery.ArrayQueryParameter("tiendas", "STRING", list(TIENDA_A_CASA))])).to_dataframe()
-            ly = ly.assign(fecha=pd.to_datetime(ly["fecha"]), _ly=pd.to_numeric(ly["venta_ly"], errors="coerce"))
+                                  bigquery.ArrayQueryParameter("tiendas", "STRING", NOMBRES_EN_TABLA)])).to_dataframe()
+            ly = ly.assign(fecha=pd.to_datetime(ly["fecha"]), _ly=pd.to_numeric(ly["venta_ly"], errors="coerce"),
+                           tienda=ly["tienda"].map(nombre_concurso))
+            ly = ly.groupby(["fecha", "tienda"], as_index=False)["_ly"].sum()
             venta = venta.merge(ly[["fecha", "tienda", "_ly"]], on=["fecha", "tienda"], how="left")
             venta["venta_ly"] = venta["venta_ly"].where(venta["venta_ly"] > 0, venta["_ly"].fillna(0.0))
             venta = venta.drop(columns="_ly")
@@ -598,7 +604,7 @@ def _leer_bigquery(cfg: dict, inicio: date = INICIO, fin: date = FIN) -> pd.Data
             ruc_valido=sql_ruc_valido("rutcli_lv"),
         )
         venta = client.query(sql, job_config=bigquery.QueryJobConfig(query_parameters=params + [
-            bigquery.ArrayQueryParameter("tiendas", "STRING", list(TIENDA_A_CASA)),
+            bigquery.ArrayQueryParameter("tiendas", "STRING", NOMBRES_EN_TABLA),
             bigquery.ArrayQueryParameter("genericos", "STRING", list(CLIENTES_GENERICOS)),
         ])).to_dataframe()
     ppto, aviso_ppto = _leer_presupuesto(client, cfg, bigquery, inicio, fin, tabla_venta)
