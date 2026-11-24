@@ -17,7 +17,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-from concurso import (ALIAS_TIENDAS_NACIONALES, DESAFIOS_SSS, FIN, INICIO, TIENDA_A_CASA,
+from concurso import (ALIAS_TIENDAS_NACIONALES, ALIAS_TIENDAS_VENTA, DESAFIOS_SSS, OUTLETS_JOCKEY, FIN, INICIO, TIENDA_A_CASA,
                       TIENDAS_FID_SOLO_DNI)
 
 COLUMNAS = ["fecha", "tienda", "venta", "presupuesto", "venta_ly", "tickets",
@@ -205,15 +205,52 @@ def _codigo(x) -> str:
     return s.lstrip("0") or s
 
 
+def _alias_secrets() -> dict[str, str]:
+    """[alias_tiendas] de los secrets: "NOMBRE O CÓDIGO EN LA TABLA" = "TIENDA DEL CONCURSO"."""
+    try:
+        alias = {_clave(k): _clave(v) for k, v in dict(st.secrets.get("alias_tiendas", {})).items()}
+        return alias | {_codigo(k): v for k, v in alias.items()}  # un código con o sin ceros a la izquierda
+    except Exception:
+        return {}
+
+
+def nombre_concurso(nombre, alias: dict[str, str] | None = None) -> str:
+    """Nombre (o código) de tienda de una tabla → nombre del concurso; si no se reconoce, queda igual."""
+    s = _clave(nombre)
+    alias = _alias_secrets() if alias is None else alias
+    for k in (s, _codigo(s)):
+        if k in alias:
+            return _TIENDA_POR_CLAVE.get(alias[k], alias[k])
+    if s in _TIENDA_POR_CLAVE:
+        return _TIENDA_POR_CLAVE[s]
+    if s in ALIAS_TIENDAS_VENTA:
+        return ALIAS_TIENDAS_VENTA[s]
+    # Marca + OUTLET (+ JOCKEY / PLAZA): los outlets del Jockey, se llamen como se llamen en la tabla
+    palabras = set(s.split())
+    if "OUTLET" in palabras and palabras - {"OUTLET", "PREMIUM", "JOCKEY", "PLAZA", "JP"} <= set(OUTLETS_JOCKEY):
+        marca = next((m for m in OUTLETS_JOCKEY if m in palabras), None)
+        if marca:
+            return OUTLETS_JOCKEY[marca]
+    return s
+
+
+# Nombres a pedir a ft_pe_venta_retail: los del concurso y los alias con que vienen en la tabla
+NOMBRES_EN_TABLA = list(TIENDA_A_CASA) + list(ALIAS_TIENDAS_VENTA)
+
+
 def _traducir_tiendas(client, bigquery, df: pd.DataFrame, tabla_venta: str, params) -> pd.DataFrame:
-    """`clave` → `tienda`. Si viene por código de local, se traduce con nlocal_lv → nombre_tienda."""
-    if not df["clave"].isin(list(TIENDA_A_CASA)).any():
+    """`clave` → `tienda`. Si viene por código de local, se traduce con nlocal_lv → nombre_tienda; después
+    los alias (outlets del Jockey y [alias_tiendas] de los secrets) llevan cada nombre al del concurso."""
+    alias = _alias_secrets()
+    df = df.assign(clave=df["clave"].map(lambda c: nombre_concurso(c, alias) if _codigo(c) in alias else c))
+    if not df["clave"].isin(list(TIENDA_A_CASA)).any() or df["clave"].astype(str).str.fullmatch(r"\d+").any():
         codigos = client.query(
             f"SELECT DISTINCT CAST(nlocal_lv AS STRING) AS cod, UPPER(TRIM(nombre_tienda)) AS tienda "
             f"FROM `{tabla_venta}` WHERE DATE(fecmov_lv) BETWEEN DATE_SUB(@fin, INTERVAL 60 DAY) AND @fin",
             job_config=bigquery.QueryJobConfig(query_parameters=params)).to_dataframe()
         nombres = {_codigo(c): t for c, t in zip(codigos["cod"], codigos["tienda"])}
         df = df.assign(clave=df["clave"].map(lambda c: nombres.get(_codigo(c), c)))
+    df = df.assign(clave=df["clave"].map(lambda c: nombre_concurso(c, alias)))
     return df.rename(columns={"clave": "tienda"})
 
 
@@ -458,18 +495,22 @@ SQL_VENTA_BI = """
 WITH base AS (
   SELECT {fecha} AS fecha, UPPER(TRIM(CAST({tienda} AS STRING))) AS clave, {ticket} AS ticket,
          {tipo} AS tipo, SAFE_CAST({venta} AS FLOAT64) AS venta, SAFE_CAST({unidades} AS FLOAT64) AS unidades,
-         {ruc_valido} AS ruc_ok
+         {ruc_valido} AS ruc_ok, {es_ecommerce} AS ecom
   FROM `{tabla}`
-  WHERE {fecha} BETWEEN DATE_SUB(@inicio, INTERVAL 364 DAY) AND @fin{sin_ecommerce}
+  WHERE {fecha} BETWEEN DATE_SUB(@inicio, INTERVAL 364 DAY) AND @fin
 ),
 dia AS (
-  SELECT fecha, clave, SUM(venta) AS venta, SUM(unidades) AS unidades,
-         COUNT(DISTINCT IF(tipo NOT IN UNNEST(@no_ticket), ticket, NULL)) AS tickets,
-         COUNT(DISTINCT IF(tipo NOT IN UNNEST(@no_ticket) AND ruc_ok, ticket, NULL)) AS tickets_fidelizados
+  SELECT fecha, clave, SUM(IF(ecom, 0, venta)) AS venta, SUM(IF(ecom, 0, unidades)) AS unidades,
+         COUNT(DISTINCT IF(NOT ecom AND tipo NOT IN UNNEST(@no_ticket), ticket, NULL)) AS tickets,
+         COUNT(DISTINCT IF(NOT ecom AND tipo NOT IN UNNEST(@no_ticket) AND ruc_ok, ticket, NULL)) AS tickets_fidelizados,
+         -- Para cuadrar con Power BI: lo que se deja fuera (ecommerce) y lo que resta (notas de crédito)
+         SUM(IF(ecom, venta, 0)) AS venta_ecommerce,
+         SUM(IF(NOT ecom AND tipo IN UNNEST(@no_ticket), venta, 0)) AS venta_nc
   FROM base
   GROUP BY 1, 2
 )
-SELECT a.fecha, a.clave, a.venta, IFNULL(ly.venta, 0) AS venta_ly, a.tickets, a.tickets_fidelizados, a.unidades
+SELECT a.fecha, a.clave, a.venta, IFNULL(ly.venta, 0) AS venta_ly, a.tickets, a.tickets_fidelizados, a.unidades,
+       a.venta_ecommerce, a.venta_nc
 FROM dia a
 LEFT JOIN dia ly ON ly.clave = a.clave AND ly.fecha = DATE_SUB(a.fecha, INTERVAL 364 DAY)
 WHERE a.fecha BETWEEN @inicio AND @fin
@@ -500,15 +541,15 @@ def _leer_venta_bi(client, bigquery, cfg: dict, tabla: str, tabla_venta: str, pa
         tienda=f"`{mapa['tienda']}`", ticket=ticket, tipo=tipo, venta=f"`{mapa['venta']}`",
         unidades=f"`{mapa['unidades']}`" if "unidades" in mapa else "0",
         ruc_valido=sql_ruc_valido(f"`{mapa['ruc']}`") if "ruc" in mapa else "FALSE",
-        sin_ecommerce=(f"\n    AND TRIM(IFNULL(CAST(`{mapa['ecommerce']}` AS STRING), '')) = ''"
-                       if "ecommerce" in mapa else ""))
+        es_ecommerce=(f"TRIM(IFNULL(CAST(`{mapa['ecommerce']}` AS STRING), '')) != ''"
+                      if "ecommerce" in mapa else "FALSE"))
     venta = client.query(sql, job_config=bigquery.QueryJobConfig(query_parameters=params + [
         bigquery.ArrayQueryParameter("no_ticket", "STRING", list(TIPOS_NO_TICKET))])).to_dataframe()
     if venta.empty:
         raise RuntimeError("no trae venta en el periodo")
     venta = _traducir_tiendas(client, bigquery, venta, tabla_venta, params)
     venta["tienda"] = venta["tienda"].astype(str).str.strip().str.upper()
-    for c in ("venta", "venta_ly", "tickets", "tickets_fidelizados", "unidades"):
+    for c in ("venta", "venta_ly", "tickets", "tickets_fidelizados", "unidades", "venta_ecommerce", "venta_nc"):
         venta[c] = pd.to_numeric(venta[c], errors="coerce").astype(float).fillna(0.0)
     venta = venta.groupby(["fecha", "tienda"], as_index=False).sum(numeric_only=True)
     if not venta["tienda"].isin(list(TIENDA_A_CASA)).any():
@@ -520,8 +561,10 @@ def _leer_venta_bi(client, bigquery, cfg: dict, tabla: str, tabla_venta: str, pa
             ly = client.query(SQL_VENTA.format(tabla=tabla_venta, col_venta=_col_venta_bruta(client, bigquery, cfg, tabla_venta),
                                                ruc_valido="FALSE"),
                               job_config=bigquery.QueryJobConfig(query_parameters=params + [
-                                  bigquery.ArrayQueryParameter("tiendas", "STRING", list(TIENDA_A_CASA))])).to_dataframe()
-            ly = ly.assign(fecha=pd.to_datetime(ly["fecha"]), _ly=pd.to_numeric(ly["venta_ly"], errors="coerce"))
+                                  bigquery.ArrayQueryParameter("tiendas", "STRING", NOMBRES_EN_TABLA)])).to_dataframe()
+            ly = ly.assign(fecha=pd.to_datetime(ly["fecha"]), _ly=pd.to_numeric(ly["venta_ly"], errors="coerce"),
+                           tienda=ly["tienda"].map(nombre_concurso))
+            ly = ly.groupby(["fecha", "tienda"], as_index=False)["_ly"].sum()
             venta = venta.merge(ly[["fecha", "tienda", "_ly"]], on=["fecha", "tienda"], how="left")
             venta["venta_ly"] = venta["venta_ly"].where(venta["venta_ly"] > 0, venta["_ly"].fillna(0.0))
             venta = venta.drop(columns="_ly")
@@ -561,7 +604,7 @@ def _leer_bigquery(cfg: dict, inicio: date = INICIO, fin: date = FIN) -> pd.Data
             ruc_valido=sql_ruc_valido("rutcli_lv"),
         )
         venta = client.query(sql, job_config=bigquery.QueryJobConfig(query_parameters=params + [
-            bigquery.ArrayQueryParameter("tiendas", "STRING", list(TIENDA_A_CASA)),
+            bigquery.ArrayQueryParameter("tiendas", "STRING", NOMBRES_EN_TABLA),
             bigquery.ArrayQueryParameter("genericos", "STRING", list(CLIENTES_GENERICOS)),
         ])).to_dataframe()
     ppto, aviso_ppto = _leer_presupuesto(client, cfg, bigquery, inicio, fin, tabla_venta)
@@ -677,6 +720,37 @@ def leer_archivo_venta_ly(archivo, nombre: str) -> tuple[pd.DataFrame, list[str]
     desconocidas = sorted(df.loc[df["tienda"].isna(), "clave"].dropna().unique())
     df = df.dropna(subset=["fecha", "tienda", "venta_ly"])
     df = df.groupby([df["fecha"].dt.normalize(), "tienda"], as_index=False)["venta_ly"].sum()
+    return df, desconocidas
+
+
+ALIAS_CUADRE = {
+    "tienda": ["tienda", "nombre_tienda", "local", "nombre_local", "store", "etiquetas_de_fila", "desc_local"],
+    "venta": ["venta", "venta_bruta", "venta_total", "venta_con_igv", "suma_de_venta", "sum_of_venta",
+              "monto", "total", "ventas"],
+    "fecha": ["fecha", "dia", "día", "date", "fecha_venta"],
+}
+
+
+def leer_archivo_cuadre(archivo, nombre: str) -> tuple[pd.DataFrame, list[str]]:
+    """Export de Power BI (CSV o Excel) → (tienda, venta_bi[, fecha]) y los nombres que no son del concurso.
+    La fecha es opcional: sin ella se compara el total del rango elegido."""
+    if nombre.lower().endswith((".xlsx", ".xls")):
+        crudo = pd.read_excel(archivo)
+    else:
+        crudo = pd.read_csv(archivo, sep=None, engine="python", encoding="utf-8-sig")
+    cols = {_clave(c).lower().replace(" ", "_"): c for c in crudo.columns}
+    mapa = {campo: next((cols[a] for a in alias if a in cols), None) for campo, alias in ALIAS_CUADRE.items()}
+    if not mapa["tienda"] or not mapa["venta"]:
+        raise ValueError("El archivo necesita una columna de tienda y una de venta "
+                         f"(tiene: {', '.join(map(str, crudo.columns))}).")
+    df = pd.DataFrame({"clave": crudo[mapa["tienda"]].map(_clave), "venta_bi": _numero(crudo[mapa["venta"]])})
+    if mapa["fecha"]:
+        df["fecha"] = _fecha(crudo[mapa["fecha"]]).dt.normalize()
+    df = df[~df["clave"].str.contains(r"^TOTAL", na=True)]  # fila «Total general» de la tabla dinámica
+    df["tienda"] = df["clave"].map(_TIENDA_POR_CLAVE)
+    desconocidas = sorted(df.loc[df["tienda"].isna(), "clave"].dropna().unique())
+    claves = ["fecha", "tienda"] if "fecha" in df and df["fecha"].notna().any() else ["tienda"]
+    df = df.dropna(subset=claves + ["venta_bi"]).groupby(claves, as_index=False)["venta_bi"].sum()
     return df, desconocidas
 
 
@@ -1120,8 +1194,18 @@ def _normalizar(df: pd.DataFrame) -> pd.DataFrame:
         if col in df:
             df[col] = pd.to_numeric(df[col], errors="coerce").astype(float).fillna(0.0)
     df["tienda"] = df["tienda"].astype(str).str.strip().str.upper()
+    alias = _alias_secrets()
+    df["tienda"] = df["tienda"].map(lambda t: t if t in TIENDA_A_CASA else nombre_concurso(t, alias))
     df["casa"] = df["tienda"].map(TIENDA_A_CASA)
+    # Venta de tiendas que no cruzan con el concurso: se deja fuera, pero se guarda para el cuadre
+    fuera = df[df["casa"].isna()]
+    sin_cruce = (fuera.assign(fecha=fuera["fecha"].dt.normalize())
+                 .groupby(["fecha", "tienda"], as_index=False)["venta"].sum() if len(fuera)
+                 else pd.DataFrame(columns=["fecha", "tienda", "venta"]))
+    attrs = dict(df.attrs)
     df = df[df["casa"].notna()].reset_index(drop=True)
+    df.attrs.update(attrs)
+    df.attrs["tiendas_sin_cruce"] = sin_cruce
     extra, origen = venta_ly_extra()
     df = aplicar_venta_ly(df, extra)
     df.attrs["venta_ly_extra"] = (origen, len(extra))

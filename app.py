@@ -13,9 +13,9 @@ import streamlit as st
 from auth import auth_configurada, requerir_login, usuario
 from concurso import (CASAS, COMPETENCIAS, DESAFIOS_SSS, FACTOR_PART_TIME, GANADOR_2025, GANADORES_POR_CASA, INICIO,
                       MAESTROS_CC, MAESTROS_TIENDA, NOTAS_TIENDA, PREMIO_CAMPEON, RANGO_PAGO, REGLAMENTO,
-                      TRAMOS, BONUS_FIDELIZACION, BONUS_SSS, BONUS_SSS_SIN_LY, TIENDAS_FID_SOLO_DNI)
+                      TRAMOS, BONUS_FIDELIZACION, BONUS_SSS, BONUS_SSS_SIN_LY, TIENDA_A_CASA, TIENDAS_FID_SOLO_DNI)
 from data import (ACTUALIZAR_CADA_MIN, SIM_DESFASE, boletas_nacionales, cargar_datos, cargar_simulacion,
-                  config_github, diagnostico_venta, guardar_boletas_nacionales, guardar_venta_ly,
+                  config_github, diagnostico_venta, guardar_boletas_nacionales, guardar_venta_ly, leer_archivo_cuadre,
                   leer_archivo_boletas, leer_archivo_venta_ly, plantilla_boletas, tabla_boletas, venta_ly_extra)
 from puntos import factor_pago, ganadores, puntos_por_tramo, ranking, resumen_casas
 from reporte import excel_concurso
@@ -684,6 +684,76 @@ def vista_diagnostico():
                        f"fidelizacion_{desde:%d%m}_{hasta:%d%m}.csv", "text/csv")
 
 
+def vista_cuadre_venta():
+    """Venta de la app vs. Power BI por tienda, con lo que explica la diferencia."""
+    html("""<div class="card"><div class="card-h">Venta · cuadre con Power BI</div>
+      <p class="reglas-p">Elige las mismas fechas que en el BI. La app mide la venta <b>bruta (con IGV)</b>, sin pedidos
+      <b>ecommerce</b> y con las <b>notas de crédito restando</b>. Las columnas de al lado muestran cuánto pesa cada cosa:
+      si en el BI la venta incluye ecommerce, compara contra «Venta + ecommerce». Para ver la diferencia exacta por
+      tienda, exporta del BI una tabla con <b>tienda</b> y <b>venta</b> (y si quieres <b>fecha</b>) y súbela aquí.</p></div>""")
+    d = df_all.copy()
+    for c in ("venta_ecommerce", "venta_nc"):
+        if c not in d:
+            d[c] = np.nan
+    primero, ultimo = d["fecha"].min().date(), d["fecha"].max().date()
+    rango = st.date_input("Fechas del cuadre", (primero, ultimo), min_value=primero, max_value=ultimo,
+                          format="DD/MM/YYYY", key="cuadre_fechas")
+    desde, hasta = (rango[0], rango[-1]) if isinstance(rango, (tuple, list)) and rango else (primero, ultimo)
+    f = d["fecha"].dt.date
+    d = d[(f >= desde) & (f <= hasta)]
+    t = d.groupby(["casa", "tienda"], as_index=False).agg(
+        venta=("venta", "sum"), venta_ecommerce=("venta_ecommerce", lambda x: x.sum(min_count=1)),
+        venta_nc=("venta_nc", lambda x: x.sum(min_count=1)), dias=("fecha", "nunique"),
+        ultimo=("fecha", "max"))
+    t["venta_con_ecommerce"] = t["venta"] + t["venta_ecommerce"].fillna(0)
+    archivo = st.file_uploader("Export de Power BI (Excel o CSV: tienda, venta y opcional fecha)",
+                               type=["xlsx", "xls", "csv"], key="cuadre_archivo")
+    if archivo is not None:
+        try:
+            bi, desconocidas = leer_archivo_cuadre(archivo, archivo.name)
+        except Exception as e:
+            st.error(f"No se pudo leer el archivo: {e}")
+            bi, desconocidas = None, []
+        if bi is not None:
+            if "fecha" in bi:
+                fb = bi["fecha"].dt.date
+                bi = bi[(fb >= desde) & (fb <= hasta)].groupby("tienda", as_index=False)["venta_bi"].sum()
+            t = t.merge(bi, on="tienda", how="outer")
+            t["casa"] = t["casa"].fillna(t["tienda"].map(TIENDA_A_CASA))
+            t["diferencia"] = t["venta"].fillna(0) - t["venta_bi"].fillna(0)
+            t["dif. con ecommerce"] = t["venta_con_ecommerce"].fillna(0) - t["venta_bi"].fillna(0)
+            tot_app, tot_bi = t["venta"].sum(), t["venta_bi"].sum()
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Venta app", f"S/ {tot_app:,.0f}")
+            c2.metric("Venta Power BI", f"S/ {tot_bi:,.0f}")
+            c3.metric("Diferencia", f"S/ {tot_app - tot_bi:,.0f}",
+                      f"{(tot_app / tot_bi - 1):+.2%}" if tot_bi else None, delta_color="off")
+            if desconocidas:
+                st.warning("Tiendas del archivo que no son del concurso (no se comparan): " + ", ".join(desconocidas))
+            t = t.sort_values("diferencia", key=lambda x: -x.abs())
+    else:
+        t = t.sort_values(["casa", "tienda"])
+    t["ultimo"] = pd.to_datetime(t["ultimo"]).dt.strftime("%d/%m")
+    t = t.rename(columns={"venta": "Venta app", "venta_ecommerce": "Ecommerce (fuera)", "venta_nc": "Notas de crédito",
+                          "venta_con_ecommerce": "Venta + ecommerce", "venta_bi": "Venta Power BI",
+                          "diferencia": "Diferencia", "dias": "días", "ultimo": "último día"})
+    dinero = {c: st.column_config.NumberColumn(format="%.0f") for c in t.columns
+              if c not in ("casa", "tienda", "días", "último día")}
+    st.dataframe(t, hide_index=True, use_container_width=True, column_config=dinero)
+    sin_cruce = df_all.attrs.get("tiendas_sin_cruce")
+    if isinstance(sin_cruce, pd.DataFrame) and len(sin_cruce):
+        fs = pd.to_datetime(sin_cruce["fecha"]).dt.date
+        s = (sin_cruce[(fs >= desde) & (fs <= hasta)].groupby("tienda", as_index=False)["venta"].sum()
+             .sort_values("venta", ascending=False))
+        if len(s):
+            st.caption(f"⚠️ Venta en la tabla que **no entra al concurso** porque el nombre/código de tienda no cruza "
+                       f"(S/ {s['venta'].sum():,.0f}). Si alguna es del concurso, hay que agregar su nombre en concurso.py:")
+            st.dataframe(s.rename(columns={"tienda": "tienda en la tabla", "venta": "venta"}), hide_index=True,
+                         column_config={"venta": st.column_config.NumberColumn(format="%.0f")})
+    st.download_button("⬇️ Descargar cuadre (CSV)", t.to_csv(index=False).encode("utf-8"),
+                       f"cuadre_venta_{desde:%d%m}_{hasta:%d%m}.csv", "text/csv")
+
+
 def vista_carga_ly():
     """Carga de la venta del año anterior que BigQuery no tiene (Azaleia)."""
     extra, origen = venta_ly_extra()
@@ -789,6 +859,7 @@ elif vista == "Competencias":
 elif vista == "Calendario":
     vista_calendario()
 elif vista == "Diagnóstico":
+    vista_cuadre_venta()
     vista_carga_ly()
     vista_diagnostico()
 
