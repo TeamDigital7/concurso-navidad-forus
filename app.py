@@ -399,7 +399,7 @@ def descarga_detalle(rank: pd.DataFrame, dias: pd.DataFrame, desde: date, hasta:
                        f"Forus-Caliz-detalle-{desde:%d%m}-al-{hasta:%d%m}.xlsx",
                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                        width="stretch", key=f"descarga_{clase}", on_click="ignore",
-                       help="Dashboard con los indicadores, ganadores de cada competencia, hoja Acumulado y una hoja por casa, con las fechas elegidas.")
+                       help="Dashboard con los indicadores, ganadores de cada competencia, venta y puntos por tramo, hoja Acumulado y una hoja por casa, con las fechas elegidas.")
     if st.button("📥 Cargar boletas nacionales", width="stretch", key=f"boletas_{clase}",
                  help="Excel con el total de boletas nacionales por día de las tiendas de turistas (base del % de "
                       "fidelización)."):
