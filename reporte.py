@@ -510,10 +510,12 @@ def _por_tramo(ws, pt: pd.DataFrame, subtitulo: str):
     _cabecera(ws, "Puntos por tramo",
               f"De dónde sale cada punto: venta, fidelización y SSS en cada tramo · {subtitulo}", ultima)
     f1, f2 = 6, 7
+    # Sin celdas combinadas en la fila de títulos: así la flecha del filtro (CASA) se ve y funciona
+    ws.merge_cells(start_row=f1, start_column=1, end_row=f1, end_column=nf)
+    _th(ws, f1, 1, "▼ Filtra por CASA (o por tienda) con la flecha de la columna", NOCHE)
     for i, (titulo, _, _, ancho) in enumerate(FIJAS_TRAMO, start=1):
         ws.column_dimensions[get_column_letter(i)].width = ancho
-        ws.merge_cells(start_row=f1, start_column=i, end_row=f2, end_column=i)
-        _th(ws, f1, i, titulo)
+        _th(ws, f2, i, titulo)
     for k, tr in enumerate(tramos):
         t = TRAMOS[tr]
         c0 = nf + 1 + k * ns
@@ -532,7 +534,13 @@ def _por_tramo(ws, pt: pd.DataFrame, subtitulo: str):
         pts_sss=("pts_sss", "sum"), venta=("venta", "sum"), presupuesto=("presupuesto", "sum"))
     total["cumpl"] = total["venta"] / total["presupuesto"].replace(0, np.nan)
     total = total.sort_values(["puntos", "cumpl"], ascending=False).reset_index(drop=True)
-    idx = pt.set_index(["tienda", "tramo"])
+    suma = ["venta", "presupuesto", "venta_ly", "venta_comp", "tickets", "tickets_fidelizados", "tickets_base_fid",
+            "pts_venta", "pts_fidelizacion", "pts_sss", "puntos"]
+    idx = pt.groupby(["tienda", "tramo"])[[c for c in suma if c in pt]].sum()
+    idx["cumplimiento"] = idx["venta"] / idx["presupuesto"].replace(0, np.nan)
+    idx["sss"] = idx["venta_comp"] / idx["venta_ly"].replace(0, np.nan) - 1
+    idx["fidelizacion"] = idx["tickets_fidelizados"] / idx["tickets_base_fid"].replace(0, np.nan)
+    claves = set(idx.index)
     linea = Side(style="thin", color="E6DCC3")
     separa = Side(style="medium", color=ORO)
     for n, x in total.iterrows():
@@ -540,7 +548,7 @@ def _por_tramo(ws, pt: pd.DataFrame, subtitulo: str):
         fondo = "FFFFFF" if n % 2 == 0 else PERGAMINO
         valores = [(n + 1 if campo is None else x[campo], fmt) for _, campo, fmt, _ in FIJAS_TRAMO]
         for tr in tramos:
-            y = idx.loc[(x["tienda"], tr)] if (x["tienda"], tr) in idx.index else None
+            y = idx.loc[(x["tienda"], tr)] if (x["tienda"], tr) in claves else None
             for _, campo, fmt, _, _ in SUB_TRAMO:
                 valores.append((None if y is None else y[campo], fmt))
         for i, (v, fmt) in enumerate(valores, start=1):
@@ -553,8 +561,9 @@ def _por_tramo(ws, pt: pd.DataFrame, subtitulo: str):
             c.alignment = Alignment(horizontal="left" if i == 2 else "center", vertical="center")
             if fmt:
                 c.number_format = fmt
-        ws.cell(row=fila, column=3).font = Font(name="Calibri", size=10, bold=True,
-                                                color=_hex(x["casa"]) if x["casa"] != "Ownership" else "A47E10")
+        if x["casa"] in CASAS:
+            ws.cell(row=fila, column=3).font = Font(name="Calibri", size=10, bold=True,
+                                                    color=_hex(x["casa"]) if x["casa"] != "Ownership" else "A47E10")
         ws.cell(row=fila, column=4).font = Font(name="Calibri", size=11, bold=True, color=BURDEOS)
     fin = f2 + len(total)
     if len(total):
@@ -610,7 +619,16 @@ def excel_concurso(rank: pd.DataFrame, dias: pd.DataFrame, competencias: list[di
     if pt is not None:
         _ganadores(wb.create_sheet("Ganadores"), pt, competencias, f"{periodo}{extra}")
     if pt is not None and len(pt):
-        _por_tramo(wb.create_sheet("Por tramo"), pt, f"{periodo}{extra}")
+        ws = wb.create_sheet("Por tramo")
+        try:
+            _por_tramo(ws, pt, f"{periodo}{extra}")
+        except Exception:  # la hoja nunca debe impedir descargar el resto del Excel
+            import traceback
+            wb.remove(ws)
+            ws = wb.create_sheet("Por tramo", 2)
+            ws["A1"] = "No se pudo armar esta hoja. Envía este texto a quien mantiene la app:"
+            for i, linea in enumerate(traceback.format_exc().splitlines()[-25:], start=3):
+                ws.cell(row=i, column=1, value=linea)
     _detalle(wb.create_sheet("Acumulado"), rank, "Copa del Mejor Mago · Acumulado",
              f"Los {len(rank)} magos {periodo}{extra}", None)
     for casa in CASAS:
