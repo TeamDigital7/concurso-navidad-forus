@@ -17,7 +17,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-from concurso import (ALIAS_TIENDAS_NACIONALES, DESAFIOS_SSS, FIN, INICIO, TIENDA_A_CASA,
+from concurso import (ALIAS_TIENDAS_NACIONALES, ALIAS_TIENDAS_VENTA, DESAFIOS_SSS, OUTLETS_JOCKEY, FIN, INICIO, TIENDA_A_CASA,
                       TIENDAS_FID_SOLO_DNI)
 
 COLUMNAS = ["fecha", "tienda", "venta", "presupuesto", "venta_ly", "tickets",
@@ -205,15 +205,48 @@ def _codigo(x) -> str:
     return s.lstrip("0") or s
 
 
+def _alias_secrets() -> dict[str, str]:
+    """[alias_tiendas] de los secrets: "NOMBRE O CÓDIGO EN LA TABLA" = "TIENDA DEL CONCURSO"."""
+    try:
+        alias = {_clave(k): _clave(v) for k, v in dict(st.secrets.get("alias_tiendas", {})).items()}
+        return alias | {_codigo(k): v for k, v in alias.items()}  # un código con o sin ceros a la izquierda
+    except Exception:
+        return {}
+
+
+def nombre_concurso(nombre, alias: dict[str, str] | None = None) -> str:
+    """Nombre (o código) de tienda de una tabla → nombre del concurso; si no se reconoce, queda igual."""
+    s = _clave(nombre)
+    alias = _alias_secrets() if alias is None else alias
+    for k in (s, _codigo(s)):
+        if k in alias:
+            return _TIENDA_POR_CLAVE.get(alias[k], alias[k])
+    if s in _TIENDA_POR_CLAVE:
+        return _TIENDA_POR_CLAVE[s]
+    if s in ALIAS_TIENDAS_VENTA:
+        return ALIAS_TIENDAS_VENTA[s]
+    # Marca + OUTLET (+ JOCKEY / PLAZA): los outlets del Jockey, se llamen como se llamen en la tabla
+    palabras = set(s.split())
+    if "OUTLET" in palabras and palabras - {"OUTLET", "JOCKEY", "PLAZA", "JP"} <= set(OUTLETS_JOCKEY):
+        marca = next((m for m in OUTLETS_JOCKEY if m in palabras), None)
+        if marca:
+            return OUTLETS_JOCKEY[marca]
+    return s
+
+
 def _traducir_tiendas(client, bigquery, df: pd.DataFrame, tabla_venta: str, params) -> pd.DataFrame:
-    """`clave` → `tienda`. Si viene por código de local, se traduce con nlocal_lv → nombre_tienda."""
-    if not df["clave"].isin(list(TIENDA_A_CASA)).any():
+    """`clave` → `tienda`. Si viene por código de local, se traduce con nlocal_lv → nombre_tienda; después
+    los alias (outlets del Jockey y [alias_tiendas] de los secrets) llevan cada nombre al del concurso."""
+    alias = _alias_secrets()
+    df = df.assign(clave=df["clave"].map(lambda c: nombre_concurso(c, alias) if _codigo(c) in alias else c))
+    if not df["clave"].isin(list(TIENDA_A_CASA)).any() or df["clave"].astype(str).str.fullmatch(r"\d+").any():
         codigos = client.query(
             f"SELECT DISTINCT CAST(nlocal_lv AS STRING) AS cod, UPPER(TRIM(nombre_tienda)) AS tienda "
             f"FROM `{tabla_venta}` WHERE DATE(fecmov_lv) BETWEEN DATE_SUB(@fin, INTERVAL 60 DAY) AND @fin",
             job_config=bigquery.QueryJobConfig(query_parameters=params)).to_dataframe()
         nombres = {_codigo(c): t for c, t in zip(codigos["cod"], codigos["tienda"])}
         df = df.assign(clave=df["clave"].map(lambda c: nombres.get(_codigo(c), c)))
+    df = df.assign(clave=df["clave"].map(lambda c: nombre_concurso(c, alias)))
     return df.rename(columns={"clave": "tienda"})
 
 
@@ -1155,6 +1188,8 @@ def _normalizar(df: pd.DataFrame) -> pd.DataFrame:
         if col in df:
             df[col] = pd.to_numeric(df[col], errors="coerce").astype(float).fillna(0.0)
     df["tienda"] = df["tienda"].astype(str).str.strip().str.upper()
+    alias = _alias_secrets()
+    df["tienda"] = df["tienda"].map(lambda t: t if t in TIENDA_A_CASA else nombre_concurso(t, alias))
     df["casa"] = df["tienda"].map(TIENDA_A_CASA)
     # Venta de tiendas que no cruzan con el concurso: se deja fuera, pero se guarda para el cuadre
     fuera = df[df["casa"].isna()]

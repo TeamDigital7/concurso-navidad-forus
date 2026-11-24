@@ -120,6 +120,20 @@ ALIAS_TIENDAS_NACIONALES = {"PAT CUSCO PLAZA": "PAT CUSCO", "RKF CUSCO PLAZA": "
                             "RKF LARCOMAR": "RKF LARCOMAR 2"}
 
 
+# Nombres con que una tienda del concurso puede venir en las tablas de venta/presupuesto. Además, todo
+# nombre con la marca + OUTLET (y JOCKEY o nada más) se lleva a su outlet del Jockey (data.nombre_concurso).
+# Se pueden sumar más en los secrets, en [alias_tiendas] ("NOMBRE O CÓDIGO EN LA TABLA" = "TIENDA").
+ALIAS_TIENDAS_VENTA = {
+    "VANS OUTLET": "VANS OUTLET JOCKEY", "VANS OUTLET JOCKEY PLAZA": "VANS OUTLET JOCKEY",
+    "VANS JOCKEY OUTLET": "VANS OUTLET JOCKEY", "OUTLET VANS JOCKEY": "VANS OUTLET JOCKEY",
+    "CLB OUTLET": "CLB OUTLET JOCKEY", "CLB OUTLET JOCKEY PLAZA": "CLB OUTLET JOCKEY",
+    "CLB JOCKEY OUTLET": "CLB OUTLET JOCKEY", "COLUMBIA OUTLET": "CLB OUTLET JOCKEY",
+    "COLUMBIA OUTLET JOCKEY": "CLB OUTLET JOCKEY", "COLUMBIA OUTLET JOCKEY PLAZA": "CLB OUTLET JOCKEY",
+    "OUTLET COLUMBIA JOCKEY": "CLB OUTLET JOCKEY",
+}
+OUTLETS_JOCKEY = {"VANS": "VANS OUTLET JOCKEY", "CLB": "CLB OUTLET JOCKEY", "COLUMBIA": "CLB OUTLET JOCKEY"}
+
+
 # ---------- Competencias y premios ----------
 @dataclass(frozen=True)
 class Competencia:
