@@ -499,6 +499,15 @@ FIJAS_TRAMO = [("#", None, "0", 5), ("MAGO (TIENDA)", "tienda", None, 28), ("CAS
                ("PTS FIDELIZ.", "pts_fidelizacion", "0", 8), ("PTS SSS", "pts_sss", "0", 8)]
 
 
+# Color de cada copa en «Por tramo» (oscuro, claro): los tramos de una copa alternan entre los dos
+COLOR_COPA = {
+    "La Copa de Quidditch": ("7A1F1F", "9C3434"),        # burdeos
+    "La Cámara de los Desafíos": ("1F3F7A", "34589C"),   # azul
+    "La Batalla de las Casas": ("1E6B45", "2F8A5E"),     # verde
+    "El Torneo de los Magos": ("5A2D82", "7647A3"),      # morado
+}
+
+
 def _por_tramo(ws, pt: pd.DataFrame, subtitulo: str):
     """Una fila por tienda y, por cada tramo, de dónde salen sus puntos: venta vs. presupuesto, tickets
     fidelizados y SSS, cada uno con los puntos que dio."""
@@ -509,24 +518,45 @@ def _por_tramo(ws, pt: pd.DataFrame, subtitulo: str):
     ultima = get_column_letter(nf + ns * len(tramos))
     _cabecera(ws, "Puntos por tramo",
               f"De dónde sale cada punto: venta, fidelización y SSS en cada tramo · {subtitulo}", ultima)
-    f1, f2 = 6, 7
+    f0, f1, f2 = 6, 7, 8  # fila de la copa, fila del tramo, fila de los títulos
     # Sin celdas combinadas en la fila de títulos: así la flecha del filtro (CASA) se ve y funciona
-    ws.merge_cells(start_row=f1, start_column=1, end_row=f1, end_column=nf)
-    _th(ws, f1, 1, "▼ Filtra por CASA (o por tienda) con la flecha de la columna", NOCHE)
+    ws.merge_cells(start_row=f0, start_column=1, end_row=f1, end_column=nf)
+    _th(ws, f0, 1, "▼ Filtra por CASA (o por tienda) con la flecha de la columna", NOCHE)
     for i, (titulo, _, _, ancho) in enumerate(FIJAS_TRAMO, start=1):
         ws.column_dimensions[get_column_letter(i)].width = ancho
         _th(ws, f2, i, titulo)
+    # Cada copa con su color y sus tramos numerados desde 1
+    comp_de = {}
+    for comp in COMPETENCIAS:
+        dentro = [i for i, t in enumerate(TRAMOS) if comp.inicio <= t.inicio and t.fin <= comp.fin]
+        for n, i in enumerate(dentro, start=1):
+            comp_de[i] = (comp, n, len(dentro))
+    por_comp = {}
+    for k, tr in enumerate(tramos):
+        comp = comp_de.get(tr, (None, tr + 1, 0))[0]
+        por_comp.setdefault(comp.nombre if comp else "", []).append(k)
+    for nombre, ks in por_comp.items():
+        colores = COLOR_COPA.get(nombre, (BURDEOS, "7A2A2A"))
+        c_ini, c_fin = nf + 1 + ks[0] * ns, nf + ks[-1] * ns + ns
+        ws.merge_cells(start_row=f0, start_column=c_ini, end_row=f0, end_column=c_fin)
+        comp = comp_de[tramos[ks[0]]][0] if tramos[ks[0]] in comp_de else None
+        _th(ws, f0, c_ini, f"🏆 {nombre.upper()} · {comp.inicio:%d/%m} al {comp.fin:%d/%m}" if comp else nombre,
+            colores[0]).font = Font(name=SERIF, size=12, bold=True, color="FFFFFF")
     for k, tr in enumerate(tramos):
         t = TRAMOS[tr]
+        comp, n, total_tramos = comp_de.get(tr, (None, tr + 1, 0))
+        colores = COLOR_COPA.get(comp.nombre if comp else "", (BURDEOS, "7A2A2A"))
+        fondo = colores[1] if n % 2 else colores[0]
         c0 = nf + 1 + k * ns
-        fondo = BURDEOS if k % 2 == 0 else PANEL_2
         cerrado = bool(pt.loc[pt["tramo"] == tr, "cerrado"].all())
         ws.merge_cells(start_row=f1, start_column=c0, end_row=f1, end_column=c0 + ns - 1)
-        _th(ws, f1, c0, f"TRAMO {tr + 1} · {t.inicio:%d/%m} al {t.fin:%d/%m} · {t.puntos} pts por venta"
+        _th(ws, f1, c0, f"TRAMO {n}" + (f" de {total_tramos}" if total_tramos else "")
+                        + f" · {t.inicio:%d/%m} al {t.fin:%d/%m} · {t.puntos} pts por venta"
                         + ("" if cerrado else " · EN CURSO (aún no suma)"), fondo)
         for j, (titulo, _, _, ancho, _) in enumerate(SUB_TRAMO):
             _th(ws, f2, c0 + j, titulo, fondo)
             ws.column_dimensions[get_column_letter(c0 + j)].width = ancho
+    ws.row_dimensions[f0].height = 26
     ws.row_dimensions[f1].height = 30
     ws.row_dimensions[f2].height = 34
     total = pt.groupby(["tienda", "casa"], as_index=False).agg(
@@ -568,8 +598,6 @@ def _por_tramo(ws, pt: pd.DataFrame, subtitulo: str):
     fin = f2 + len(total)
     if len(total):
         verde, rojo = Font(color="1E8A4C", bold=True), Font(color="C0392B", bold=True)
-        oro = PatternFill("solid", start_color="F6E7B8", end_color="F6E7B8")
-        gana = Font(color=BURDEOS, bold=True)
         rng = lambda col: f"{get_column_letter(col)}{f2 + 1}:{get_column_letter(col)}{fin}"
         reglas = {
             "ppto": [CellIsRule(operator="greaterThanOrEqual", formula=["1"], font=verde),
@@ -578,8 +606,6 @@ def _por_tramo(ws, pt: pd.DataFrame, subtitulo: str):
                     CellIsRule(operator="lessThanOrEqual", formula=[str(BONUS_FIDELIZACION["umbral"])], font=rojo)],
             "sss": [CellIsRule(operator="greaterThanOrEqual", formula=["0"], font=verde),
                     CellIsRule(operator="lessThan", formula=["0"], font=rojo)],
-            "pts": [CellIsRule(operator="greaterThan", formula=["0"], fill=oro, font=gana)],
-            "total": [CellIsRule(operator="greaterThan", formula=["0"], fill=_fill(ORO_CLARO), font=gana)],
         }
         for k, _ in enumerate(tramos):
             for j, (*_, tipo) in enumerate(SUB_TRAMO):
@@ -602,7 +628,7 @@ def _por_tramo(ws, pt: pd.DataFrame, subtitulo: str):
     ws.freeze_panes = f"E{f2 + 1}"
     ws.page_setup.orientation = "landscape"
     ws.page_setup.fitToWidth, ws.page_setup.fitToHeight = 0, 0
-    ws.print_title_rows = f"{f1}:{f2}"
+    ws.print_title_rows = f"{f0}:{f2}"
     ws.print_title_cols = "A:D"
 
 
