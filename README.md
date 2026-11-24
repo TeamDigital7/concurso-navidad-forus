@@ -144,9 +144,9 @@ arma recién al tocar el botón:
 - **Dashboard**: banda del concurso (`assets/excel-banda.jpg`), indicadores del Canal Retail,
   tabla y gráficos por casa, top 10 y los 10 con menor % de presupuesto, y el estado de cada
   competencia.
-- **Por tramo**: una fila por tienda y, por cada tramo, venta, % de presupuesto (verde si lo ganó) y puntos.
-- **Detalle tramos**: una fila por tienda y tramo con venta, presupuesto, SSS, fidelización y los puntos de
-  venta, fidelización y SSS, con filtros para ver un tramo, una casa o una tienda.
+- **Por tramo**: una fila por tienda y, por cada tramo, de dónde salen sus puntos: venta, presupuesto y % (PTS
+  VENTA), base y tickets fidelizados y % (PTS FIDELIZ.), SSS (PTS SSS) y los puntos del tramo; al inicio, los
+  totales de cada tipo de punto. Abajo, la regla de cada punto.
 - **Acumulado** y **una hoja por casa** (con su escudo y color): todos los campos por tienda,
   colores de cumplimiento, barras de puntos y filtros. Sin premios.
 

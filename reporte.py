@@ -1,5 +1,5 @@
 """Excel del concurso: hoja Dashboard con los indicadores, hoja Ganadores (los 5 primeros de cada casa
-en cada competencia), hojas Por tramo (matriz tienda × tramo) y Detalle tramos (una fila por tienda y
+en cada competencia), hoja Por tramo (cada tienda con sus puntos de venta, fidelización y SSS en cada
 tramo), hoja Acumulado y una hoja por casa.
 
 Se arma solo cuando alguien toca "Descargar" (el botón recibe la función, no el archivo).
@@ -25,7 +25,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from PIL import Image
 
-from concurso import BONUS_FIDELIZACION, CASAS, COMPETENCIAS, DESAFIOS_SSS, GANADORES_POR_CASA, RANGO_PAGO, TRAMOS
+from concurso import BONUS_FIDELIZACION, BONUS_SSS, BONUS_SSS_SIN_LY, CASAS, COMPETENCIAS, DESAFIOS_SSS, GANADORES_POR_CASA, RANGO_PAGO, TRAMOS
 from puntos import factor_pago, ranking, resumen_casas
 
 ASSETS = Path(__file__).parent / "assets"
@@ -485,58 +485,70 @@ def _th(ws, fila: int, col: int, texto: str, fill: str = NOCHE):
     return c
 
 
-def _estado_tramo(x) -> str:
-    return "Cerrado" if x["cerrado"] else "En curso"
+# Columnas de cada tramo en «Por tramo»: (título, campo, formato, ancho, tipo para el color)
+SUB_TRAMO = [
+    ("VENTA S/", "venta", "#,##0", 11, None), ("PPTO S/", "presupuesto", "#,##0", 11, None),
+    ("% PPTO", "cumplimiento", "0%", 7, "ppto"), ("PTS VENTA", "pts_venta", "0", 7, "pts"),
+    ("BASE FIDELIZ.", "tickets_base_fid", "#,##0", 8, None), ("TICKETS FIDELIZ.", "tickets_fidelizados", "#,##0", 8, None),
+    ("% FIDELIZ.", "fidelizacion", "0%", 7, "fid"), ("PTS FIDELIZ.", "pts_fidelizacion", "0", 7, "pts"),
+    ("SSS", "sss", "+0%;-0%", 7, "sss"), ("PTS SSS", "pts_sss", "0", 7, "pts"),
+    ("PTS TRAMO", "puntos", "0", 7, "total"),
+]
+FIJAS_TRAMO = [("#", None, "0", 5), ("MAGO (TIENDA)", "tienda", None, 28), ("CASA", "casa", None, 14),
+               ("PUNTOS TOTAL", "puntos", "0", 9), ("PTS VENTA", "pts_venta", "0", 8),
+               ("PTS FIDELIZ.", "pts_fidelizacion", "0", 8), ("PTS SSS", "pts_sss", "0", 8)]
 
 
 def _por_tramo(ws, pt: pd.DataFrame, subtitulo: str):
-    """Matriz: una fila por tienda y, por cada tramo, venta, % de presupuesto y puntos."""
+    """Una fila por tienda y, por cada tramo, de dónde salen sus puntos: venta vs. presupuesto, tickets
+    fidelizados y SSS, cada uno con los puntos que dio."""
     ws.sheet_view.showGridLines = False
     ws.sheet_properties.tabColor = ORO
     tramos = sorted(pt["tramo"].unique())
-    fijas = ["#", "MAGO (TIENDA)", "CASA", "PUNTOS TOTAL"]
-    sub = [("VENTA S/", "venta", "#,##0", 11), ("% PPTO", "cumplimiento", "0%", 8), ("PTS", "puntos", "0", 6)]
-    ncol = len(fijas) + len(sub) * len(tramos)
-    ultima = get_column_letter(ncol)
-    for i, w in enumerate([5, 28, 15, 9], start=1):
-        ws.column_dimensions[get_column_letter(i)].width = w
-    _cabecera(ws, "Puntos por tramo", f"Cuánto hizo cada mago en cada tramo · {subtitulo}", ultima)
+    nf, ns = len(FIJAS_TRAMO), len(SUB_TRAMO)
+    ultima = get_column_letter(nf + ns * len(tramos))
+    _cabecera(ws, "Puntos por tramo",
+              f"De dónde sale cada punto: venta, fidelización y SSS en cada tramo · {subtitulo}", ultima)
     f1, f2 = 6, 7
-    for i, t in enumerate(fijas, start=1):
+    for i, (titulo, _, _, ancho) in enumerate(FIJAS_TRAMO, start=1):
+        ws.column_dimensions[get_column_letter(i)].width = ancho
         ws.merge_cells(start_row=f1, start_column=i, end_row=f2, end_column=i)
-        _th(ws, f1, i, t)
+        _th(ws, f1, i, titulo)
     for k, tr in enumerate(tramos):
         t = TRAMOS[tr]
-        c0 = len(fijas) + 1 + k * len(sub)
+        c0 = nf + 1 + k * ns
         fondo = BURDEOS if k % 2 == 0 else PANEL_2
         cerrado = bool(pt.loc[pt["tramo"] == tr, "cerrado"].all())
-        ws.merge_cells(start_row=f1, start_column=c0, end_row=f1, end_column=c0 + len(sub) - 1)
-        _th(ws, f1, c0, f"T{tr + 1} · {t.inicio:%d/%m}–{t.fin:%d/%m} · {t.puntos} pts"
-                        + ("" if cerrado else " (en curso)"), fondo)
-        for j, (titulo, _, _, ancho) in enumerate(sub):
+        ws.merge_cells(start_row=f1, start_column=c0, end_row=f1, end_column=c0 + ns - 1)
+        _th(ws, f1, c0, f"TRAMO {tr + 1} · {t.inicio:%d/%m} al {t.fin:%d/%m} · {t.puntos} pts por venta"
+                        + ("" if cerrado else " · EN CURSO (aún no suma)"), fondo)
+        for j, (titulo, _, _, ancho, _) in enumerate(SUB_TRAMO):
             _th(ws, f2, c0 + j, titulo, fondo)
             ws.column_dimensions[get_column_letter(c0 + j)].width = ancho
     ws.row_dimensions[f1].height = 30
-    ws.row_dimensions[f2].height = 20
-    total = pt.groupby(["tienda", "casa"], as_index=False).agg(puntos=("puntos", "sum"), venta=("venta", "sum"),
-                                                                presupuesto=("presupuesto", "sum"))
+    ws.row_dimensions[f2].height = 34
+    total = pt.groupby(["tienda", "casa"], as_index=False).agg(
+        puntos=("puntos", "sum"), pts_venta=("pts_venta", "sum"), pts_fidelizacion=("pts_fidelizacion", "sum"),
+        pts_sss=("pts_sss", "sum"), venta=("venta", "sum"), presupuesto=("presupuesto", "sum"))
     total["cumpl"] = total["venta"] / total["presupuesto"].replace(0, np.nan)
     total = total.sort_values(["puntos", "cumpl"], ascending=False).reset_index(drop=True)
     idx = pt.set_index(["tienda", "tramo"])
     linea = Side(style="thin", color="E6DCC3")
+    separa = Side(style="medium", color=ORO)
     for n, x in total.iterrows():
         fila = f2 + 1 + n
         fondo = "FFFFFF" if n % 2 == 0 else PERGAMINO
-        valores = [(n + 1, "0"), (x["tienda"], None), (x["casa"], None), (int(x["puntos"]), "0")]
+        valores = [(n + 1 if campo is None else x[campo], fmt) for _, campo, fmt, _ in FIJAS_TRAMO]
         for tr in tramos:
             y = idx.loc[(x["tienda"], tr)] if (x["tienda"], tr) in idx.index else None
-            for _, campo, fmt, _ in sub:
-                v = None if y is None else _num(y[campo])
-                valores.append((int(v) if fmt == "0" and v is not None else v, fmt))
+            for _, campo, fmt, _, _ in SUB_TRAMO:
+                valores.append((None if y is None else y[campo], fmt))
         for i, (v, fmt) in enumerate(valores, start=1):
-            c = ws.cell(row=fila, column=i, value=v)
+            v = _num(v) if fmt else v
+            c = ws.cell(row=fila, column=i, value=int(v) if fmt == "0" and v is not None else v)
             c.fill = _fill(fondo)
-            c.border = Border(bottom=linea)
+            primera = i > nf and (i - nf - 1) % ns == 0
+            c.border = Border(bottom=linea, left=separa if primera or i == nf + 1 else None)
             c.font = Font(name="Calibri", size=10, color="1E1E1E", bold=i in (2, 4))
             c.alignment = Alignment(horizontal="left" if i == 2 else "center", vertical="center")
             if fmt:
@@ -548,88 +560,41 @@ def _por_tramo(ws, pt: pd.DataFrame, subtitulo: str):
     if len(total):
         verde, rojo = Font(color="1E8A4C", bold=True), Font(color="C0392B", bold=True)
         oro = PatternFill("solid", start_color="F6E7B8", end_color="F6E7B8")
+        gana = Font(color=BURDEOS, bold=True)
+        rng = lambda col: f"{get_column_letter(col)}{f2 + 1}:{get_column_letter(col)}{fin}"
+        reglas = {
+            "ppto": [CellIsRule(operator="greaterThanOrEqual", formula=["1"], font=verde),
+                     CellIsRule(operator="lessThan", formula=["1"], font=rojo)],
+            "fid": [CellIsRule(operator="greaterThan", formula=[str(BONUS_FIDELIZACION["umbral"])], font=verde),
+                    CellIsRule(operator="lessThanOrEqual", formula=[str(BONUS_FIDELIZACION["umbral"])], font=rojo)],
+            "sss": [CellIsRule(operator="greaterThanOrEqual", formula=["0"], font=verde),
+                    CellIsRule(operator="lessThan", formula=["0"], font=rojo)],
+            "pts": [CellIsRule(operator="greaterThan", formula=["0"], fill=oro, font=gana)],
+            "total": [CellIsRule(operator="greaterThan", formula=["0"], fill=_fill(ORO_CLARO), font=gana)],
+        }
         for k, _ in enumerate(tramos):
-            c0 = len(fijas) + 1 + k * len(sub)
-            col_p, col_pts = get_column_letter(c0 + 1), get_column_letter(c0 + 2)
-            rng = f"{col_p}{f2 + 1}:{col_p}{fin}"
-            ws.conditional_formatting.add(rng, CellIsRule(operator="greaterThanOrEqual", formula=["1"], font=verde))
-            ws.conditional_formatting.add(rng, CellIsRule(operator="lessThan", formula=["1"], font=rojo))
-            ws.conditional_formatting.add(f"{col_pts}{f2 + 1}:{col_pts}{fin}",
-                                          CellIsRule(operator="greaterThan", formula=["0"], fill=oro))
-        ws.conditional_formatting.add(f"D{f2 + 1}:D{fin}", DataBarRule(start_type="num", start_value=0,
-                                                                       end_type="max", color=ORO, showValue=True))
+            for j, (*_, tipo) in enumerate(SUB_TRAMO):
+                for regla in reglas.get(tipo, []):
+                    ws.conditional_formatting.add(rng(nf + 1 + k * ns + j), regla)
+        ws.conditional_formatting.add(rng(4), DataBarRule(start_type="num", start_value=0, end_type="max",
+                                                          color=ORO, showValue=True))
         ws.auto_filter.ref = f"A{f2}:{ultima}{fin}"
-    _celda(ws, f"A{fin + 2}", "% PPTO en verde = tramo ganado (venta ≥ presupuesto). PTS incluye los bonus de "
-                              "fidelización y SSS. Un tramo en curso todavía no suma puntos.", size=9, color=GRIS,
-           merge=f"A{fin + 2}:{ultima}{fin + 2}")
+    notas = [
+        f"PTS VENTA: los puntos del tramo si la venta llega al 100% del presupuesto (% PPTO en verde).",
+        f"PTS FIDELIZ.: +{BONUS_FIDELIZACION['puntos']} si % FIDELIZ. (TICKETS FIDELIZ. ÷ BASE FIDELIZ.) supera el "
+        f"{BONUS_FIDELIZACION['umbral']:.0%}. Ticket fidelizado = boleta con DNI y correo válidos.",
+        f"PTS SSS: +{BONUS_SSS['puntos']} si el SSS (crecimiento vs. el año pasado, mismos días) supera el "
+        f"{BONUS_SSS['umbral']:.0%}; sin venta el año pasado (SSS vacío), si la venta supera el "
+        f"{BONUS_SSS_SIN_LY['umbral']:.0%} del presupuesto.",
+        "PTS TRAMO = PTS VENTA + PTS FIDELIZ. + PTS SSS. Un tramo en curso todavía no suma puntos.",
+    ]
+    for i, nota in enumerate(notas):
+        _celda(ws, f"A{fin + 2 + i}", nota, size=9, color="5A5A5A", merge=f"A{fin + 2 + i}:{ultima}{fin + 2 + i}")
     ws.freeze_panes = f"E{f2 + 1}"
     ws.page_setup.orientation = "landscape"
-    ws.page_setup.fitToWidth, ws.page_setup.fitToHeight = 1, 0
-    ws.sheet_properties.pageSetUpPr.fitToPage = True
-
-
-COLUMNAS_TRAMO = [  # (campo, título, ancho, formato)
-    ("tramo_n", "TRAMO", 7, "0"), ("fechas", "FECHAS", 13, None), ("competencia", "COMPETENCIA", 22, None),
-    ("estado", "ESTADO", 10, None), ("tienda", "MAGO (TIENDA)", 28, None), ("casa", "CASA", 15, None),
-    ("venta", "VENTA S/", 13, "#,##0"), ("presupuesto", "PRESUPUESTO S/", 14, "#,##0"),
-    ("cumplimiento", "% PPTO", 9, "0.0%"), ("venta_ly", "VENTA AÑO PASADO S/", 14, "#,##0"),
-    ("sss", "SSS", 9, "+0.0%;-0.0%"), ("tickets", "TICKETS", 9, "#,##0"),
-    ("fidelizacion", "% FIDELIZ.", 9, "0.0%"), ("pts_venta", "PTS VENTA", 9, "0"),
-    ("pts_fidelizacion", "PTS FIDELIZ.", 9, "0"), ("pts_sss", "PTS SSS", 9, "0"), ("puntos", "PUNTOS", 9, "0"),
-]
-
-
-def _detalle_tramos(ws, pt: pd.DataFrame, subtitulo: str):
-    """Lista larga: una fila por tienda y tramo, con filtros para ver un tramo, una casa o una tienda."""
-    ws.sheet_view.showGridLines = False
-    ws.sheet_properties.tabColor = BURDEOS
-    ultima = get_column_letter(len(COLUMNAS_TRAMO))
-    for i, (_, _, ancho, _) in enumerate(COLUMNAS_TRAMO, start=1):
-        ws.column_dimensions[get_column_letter(i)].width = ancho
-    _cabecera(ws, "Detalle por tramo", f"Una fila por mago y tramo (usa los filtros) · {subtitulo}", ultima)
-    cab = 6
-    for i, (_, t, _, _) in enumerate(COLUMNAS_TRAMO, start=1):
-        _th(ws, cab, i, t)
-    ws.row_dimensions[cab].height = 32
-    d = pt.assign(tramo_n=pt["tramo"] + 1,
-                  fechas=[f"{a:%d/%m}–{b:%d/%m}" for a, b in zip(pt["inicio"], pt["fin"])],
-                  estado=pt.apply(_estado_tramo, axis=1)).sort_values(["tramo", "casa", "puntos", "cumplimiento"],
-                                                                      ascending=[True, True, False, False])
-    linea = Side(style="thin", color="E6DCC3")
-    tramo_ant = None
-    for k, (_, x) in enumerate(d.reset_index(drop=True).iterrows()):
-        fila = cab + 1 + k
-        fondo = "FFFFFF" if x["tramo"] % 2 == 0 else PERGAMINO
-        for i, (campo, _, _, fmt) in enumerate(COLUMNAS_TRAMO, start=1):
-            v = _num(x[campo]) if fmt else x[campo]
-            c = ws.cell(row=fila, column=i, value=int(v) if fmt == "0" and v is not None else v)
-            c.fill = _fill(fondo)
-            c.border = Border(bottom=linea, top=Side(style="medium", color=ORO) if x["tramo"] != tramo_ant and k else None)
-            c.font = Font(name="Calibri", size=10, color="1E1E1E", bold=campo in ("tienda", "puntos"))
-            c.alignment = Alignment(horizontal="left" if campo in ("tienda", "competencia") else "center",
-                                    vertical="center")
-            if fmt:
-                c.number_format = fmt
-        ws.cell(row=fila, column=6).font = Font(name="Calibri", size=10, bold=True,
-                                                color=_hex(x["casa"]) if x["casa"] != "Ownership" else "A47E10")
-        tramo_ant = x["tramo"]
-    fin = cab + len(d)
-    if len(d):
-        col = {campo: get_column_letter(i) for i, (campo, *_) in enumerate(COLUMNAS_TRAMO, start=1)}
-        verde, rojo = Font(color="1E8A4C", bold=True), Font(color="C0392B", bold=True)
-        rng = lambda c: f"{col[c]}{cab + 1}:{col[c]}{fin}"
-        ws.conditional_formatting.add(rng("cumplimiento"), CellIsRule(operator="greaterThanOrEqual", formula=["1"], font=verde))
-        ws.conditional_formatting.add(rng("cumplimiento"), CellIsRule(operator="lessThan", formula=["1"], font=rojo))
-        ws.conditional_formatting.add(rng("sss"), CellIsRule(operator="greaterThanOrEqual", formula=["0"], font=verde))
-        ws.conditional_formatting.add(rng("sss"), CellIsRule(operator="lessThan", formula=["0"], font=rojo))
-        ws.conditional_formatting.add(rng("fidelizacion"), CellIsRule(
-            operator="greaterThan", formula=[str(BONUS_FIDELIZACION["umbral"])], font=verde))
-        ws.auto_filter.ref = f"A{cab}:{ultima}{fin}"
-    ws.freeze_panes = f"A{cab + 1}"
-    ws.page_setup.orientation = "landscape"
-    ws.page_setup.fitToWidth, ws.page_setup.fitToHeight = 1, 0
-    ws.sheet_properties.pageSetUpPr.fitToPage = True
-    ws.print_title_rows = f"{cab}:{cab}"
+    ws.page_setup.fitToWidth, ws.page_setup.fitToHeight = 0, 0
+    ws.print_title_rows = f"{f1}:{f2}"
+    ws.print_title_cols = "A:D"
 
 
 def excel_concurso(rank: pd.DataFrame, dias: pd.DataFrame, competencias: list[dict], desde: date, hasta: date,
@@ -646,7 +611,6 @@ def excel_concurso(rank: pd.DataFrame, dias: pd.DataFrame, competencias: list[di
         _ganadores(wb.create_sheet("Ganadores"), pt, competencias, f"{periodo}{extra}")
     if pt is not None and len(pt):
         _por_tramo(wb.create_sheet("Por tramo"), pt, f"{periodo}{extra}")
-        _detalle_tramos(wb.create_sheet("Detalle tramos"), pt, f"{periodo}{extra}")
     _detalle(wb.create_sheet("Acumulado"), rank, "Copa del Mejor Mago · Acumulado",
              f"Los {len(rank)} magos {periodo}{extra}", None)
     for casa in CASAS:
