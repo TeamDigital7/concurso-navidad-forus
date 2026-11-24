@@ -458,18 +458,22 @@ SQL_VENTA_BI = """
 WITH base AS (
   SELECT {fecha} AS fecha, UPPER(TRIM(CAST({tienda} AS STRING))) AS clave, {ticket} AS ticket,
          {tipo} AS tipo, SAFE_CAST({venta} AS FLOAT64) AS venta, SAFE_CAST({unidades} AS FLOAT64) AS unidades,
-         {ruc_valido} AS ruc_ok
+         {ruc_valido} AS ruc_ok, {es_ecommerce} AS ecom
   FROM `{tabla}`
-  WHERE {fecha} BETWEEN DATE_SUB(@inicio, INTERVAL 364 DAY) AND @fin{sin_ecommerce}
+  WHERE {fecha} BETWEEN DATE_SUB(@inicio, INTERVAL 364 DAY) AND @fin
 ),
 dia AS (
-  SELECT fecha, clave, SUM(venta) AS venta, SUM(unidades) AS unidades,
-         COUNT(DISTINCT IF(tipo NOT IN UNNEST(@no_ticket), ticket, NULL)) AS tickets,
-         COUNT(DISTINCT IF(tipo NOT IN UNNEST(@no_ticket) AND ruc_ok, ticket, NULL)) AS tickets_fidelizados
+  SELECT fecha, clave, SUM(IF(ecom, 0, venta)) AS venta, SUM(IF(ecom, 0, unidades)) AS unidades,
+         COUNT(DISTINCT IF(NOT ecom AND tipo NOT IN UNNEST(@no_ticket), ticket, NULL)) AS tickets,
+         COUNT(DISTINCT IF(NOT ecom AND tipo NOT IN UNNEST(@no_ticket) AND ruc_ok, ticket, NULL)) AS tickets_fidelizados,
+         -- Para cuadrar con Power BI: lo que se deja fuera (ecommerce) y lo que resta (notas de crédito)
+         SUM(IF(ecom, venta, 0)) AS venta_ecommerce,
+         SUM(IF(NOT ecom AND tipo IN UNNEST(@no_ticket), venta, 0)) AS venta_nc
   FROM base
   GROUP BY 1, 2
 )
-SELECT a.fecha, a.clave, a.venta, IFNULL(ly.venta, 0) AS venta_ly, a.tickets, a.tickets_fidelizados, a.unidades
+SELECT a.fecha, a.clave, a.venta, IFNULL(ly.venta, 0) AS venta_ly, a.tickets, a.tickets_fidelizados, a.unidades,
+       a.venta_ecommerce, a.venta_nc
 FROM dia a
 LEFT JOIN dia ly ON ly.clave = a.clave AND ly.fecha = DATE_SUB(a.fecha, INTERVAL 364 DAY)
 WHERE a.fecha BETWEEN @inicio AND @fin
@@ -500,15 +504,15 @@ def _leer_venta_bi(client, bigquery, cfg: dict, tabla: str, tabla_venta: str, pa
         tienda=f"`{mapa['tienda']}`", ticket=ticket, tipo=tipo, venta=f"`{mapa['venta']}`",
         unidades=f"`{mapa['unidades']}`" if "unidades" in mapa else "0",
         ruc_valido=sql_ruc_valido(f"`{mapa['ruc']}`") if "ruc" in mapa else "FALSE",
-        sin_ecommerce=(f"\n    AND TRIM(IFNULL(CAST(`{mapa['ecommerce']}` AS STRING), '')) = ''"
-                       if "ecommerce" in mapa else ""))
+        es_ecommerce=(f"TRIM(IFNULL(CAST(`{mapa['ecommerce']}` AS STRING), '')) != ''"
+                      if "ecommerce" in mapa else "FALSE"))
     venta = client.query(sql, job_config=bigquery.QueryJobConfig(query_parameters=params + [
         bigquery.ArrayQueryParameter("no_ticket", "STRING", list(TIPOS_NO_TICKET))])).to_dataframe()
     if venta.empty:
         raise RuntimeError("no trae venta en el periodo")
     venta = _traducir_tiendas(client, bigquery, venta, tabla_venta, params)
     venta["tienda"] = venta["tienda"].astype(str).str.strip().str.upper()
-    for c in ("venta", "venta_ly", "tickets", "tickets_fidelizados", "unidades"):
+    for c in ("venta", "venta_ly", "tickets", "tickets_fidelizados", "unidades", "venta_ecommerce", "venta_nc"):
         venta[c] = pd.to_numeric(venta[c], errors="coerce").astype(float).fillna(0.0)
     venta = venta.groupby(["fecha", "tienda"], as_index=False).sum(numeric_only=True)
     if not venta["tienda"].isin(list(TIENDA_A_CASA)).any():
@@ -677,6 +681,37 @@ def leer_archivo_venta_ly(archivo, nombre: str) -> tuple[pd.DataFrame, list[str]
     desconocidas = sorted(df.loc[df["tienda"].isna(), "clave"].dropna().unique())
     df = df.dropna(subset=["fecha", "tienda", "venta_ly"])
     df = df.groupby([df["fecha"].dt.normalize(), "tienda"], as_index=False)["venta_ly"].sum()
+    return df, desconocidas
+
+
+ALIAS_CUADRE = {
+    "tienda": ["tienda", "nombre_tienda", "local", "nombre_local", "store", "etiquetas_de_fila", "desc_local"],
+    "venta": ["venta", "venta_bruta", "venta_total", "venta_con_igv", "suma_de_venta", "sum_of_venta",
+              "monto", "total", "ventas"],
+    "fecha": ["fecha", "dia", "día", "date", "fecha_venta"],
+}
+
+
+def leer_archivo_cuadre(archivo, nombre: str) -> tuple[pd.DataFrame, list[str]]:
+    """Export de Power BI (CSV o Excel) → (tienda, venta_bi[, fecha]) y los nombres que no son del concurso.
+    La fecha es opcional: sin ella se compara el total del rango elegido."""
+    if nombre.lower().endswith((".xlsx", ".xls")):
+        crudo = pd.read_excel(archivo)
+    else:
+        crudo = pd.read_csv(archivo, sep=None, engine="python", encoding="utf-8-sig")
+    cols = {_clave(c).lower().replace(" ", "_"): c for c in crudo.columns}
+    mapa = {campo: next((cols[a] for a in alias if a in cols), None) for campo, alias in ALIAS_CUADRE.items()}
+    if not mapa["tienda"] or not mapa["venta"]:
+        raise ValueError("El archivo necesita una columna de tienda y una de venta "
+                         f"(tiene: {', '.join(map(str, crudo.columns))}).")
+    df = pd.DataFrame({"clave": crudo[mapa["tienda"]].map(_clave), "venta_bi": _numero(crudo[mapa["venta"]])})
+    if mapa["fecha"]:
+        df["fecha"] = _fecha(crudo[mapa["fecha"]]).dt.normalize()
+    df = df[~df["clave"].str.contains(r"^TOTAL", na=True)]  # fila «Total general» de la tabla dinámica
+    df["tienda"] = df["clave"].map(_TIENDA_POR_CLAVE)
+    desconocidas = sorted(df.loc[df["tienda"].isna(), "clave"].dropna().unique())
+    claves = ["fecha", "tienda"] if "fecha" in df and df["fecha"].notna().any() else ["tienda"]
+    df = df.dropna(subset=claves + ["venta_bi"]).groupby(claves, as_index=False)["venta_bi"].sum()
     return df, desconocidas
 
 
@@ -1121,7 +1156,15 @@ def _normalizar(df: pd.DataFrame) -> pd.DataFrame:
             df[col] = pd.to_numeric(df[col], errors="coerce").astype(float).fillna(0.0)
     df["tienda"] = df["tienda"].astype(str).str.strip().str.upper()
     df["casa"] = df["tienda"].map(TIENDA_A_CASA)
+    # Venta de tiendas que no cruzan con el concurso: se deja fuera, pero se guarda para el cuadre
+    fuera = df[df["casa"].isna()]
+    sin_cruce = (fuera.assign(fecha=fuera["fecha"].dt.normalize())
+                 .groupby(["fecha", "tienda"], as_index=False)["venta"].sum() if len(fuera)
+                 else pd.DataFrame(columns=["fecha", "tienda", "venta"]))
+    attrs = dict(df.attrs)
     df = df[df["casa"].notna()].reset_index(drop=True)
+    df.attrs.update(attrs)
+    df.attrs["tiendas_sin_cruce"] = sin_cruce
     extra, origen = venta_ly_extra()
     df = aplicar_venta_ly(df, extra)
     df.attrs["venta_ly_extra"] = (origen, len(extra))

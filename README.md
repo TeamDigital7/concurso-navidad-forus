@@ -78,6 +78,13 @@ y CLB Outlet Jockey en la tabla de venta.
 
 Sin secrets la app usa datos de ejemplo.
 
+### Cuadre de venta con Power BI
+
+En `?diagnostico=1`, **Venta · cuadre con Power BI**: venta de la app por tienda en las fechas elegidas, con lo
+que se deja fuera (pedidos **ecommerce**) y lo que resta (**notas de crédito**), y la venta de la tabla cuyo nombre
+de tienda no cruza con el concurso (no entra a ninguna casa). Se puede subir un export del BI (Excel/CSV con
+tienda, venta y opcional fecha) y la app muestra la diferencia tienda por tienda, ordenada de mayor a menor.
+
 ## Fidelización (regla de Power BI)
 
 Un ticket es fidelizado solo si tiene **correo válido y RUC/DNI válido** (medida "Registro
